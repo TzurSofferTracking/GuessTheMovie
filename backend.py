@@ -19,7 +19,27 @@ os.makedirs(app.config["SESSION_FILE_DIR"], exist_ok=True)
 Session(app)
 scraper = LetterboxdScraper()
 ROUND_COUNT = 5
-HINT_COSTS = {"image": 25, "cast": 20, "rating": 15, "userRating": 15, "director": 10, "year": 10}
+HINT_COSTS = {"image": 25, "cast": 20, "rating": 15, "userRating": 15, "director": 10, "genres": 10, "tagline": 10, "description": 20, "year": 10}
+
+
+def has_hint_value(movie, hint_name):
+    value = movie.get(hint_name)
+    return bool(value)
+
+
+def redact_names(value, movie):
+    if not isinstance(value, str):
+        return value
+    names = [movie.get("title", ""), *movie.get("cast", [])]
+    title_words = movie.get("title", "").split()
+    if len(title_words) >= 2:
+        names.append(" ".join(title_words[:2]))
+    for name in sorted((name for name in names if isinstance(name, str) and name.strip()), key=len, reverse=True):
+        value = re.sub(re.escape(name), "*****", value, flags=re.IGNORECASE)
+    return value
+
+
+app.jinja_env.filters["redact_names"] = redact_names
 
 
 def title_without_year(title):
@@ -111,7 +131,7 @@ def game():
         round_number=session.get("round_number", 0),
         round_count=session.get("round_count", ROUND_COUNT),
         mode=session.get("mode", "easy"),
-        hint_costs=HINT_COSTS,
+        hint_costs={name: cost for name, cost in HINT_COSTS.items() if has_hint_value(game_round["movie"], name)},
         movie_names=[name for name in session.get("movie_names", []) if isinstance(name, str)],
         round_points=max(0, 100 - hint_total),
     )
@@ -144,7 +164,7 @@ def skip():
 @app.post("/hint/<hint_name>")
 def hint(hint_name):
     game_round = session.get("round", {})
-    if hint_name not in HINT_COSTS or not game_round or game_round.get("answered"):
+    if hint_name not in HINT_COSTS or not game_round or game_round.get("answered") or not has_hint_value(game_round.get("movie", {}), hint_name):
         return redirect(url_for("game"))
     if hint_name not in game_round["hints"]:
         game_round["hints"].append(hint_name)

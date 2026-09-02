@@ -35,21 +35,37 @@ class LetterboxdScraper(Scraper):
         self.save(soup)
         title = soup.find("h1", class_="headline-1").text.strip()
         year = soup.find("span", class_="releasedate").text.strip()
-        imageUrl = soup.find("meta", {"property": "og:image"}).get("content")
-        rating = soup.find("meta", {"name": "twitter:data2"}).get("content").removesuffix(" out of 5")
+        imageTag = soup.find("meta", {"property": "og:image"})
+        imageUrl = imageTag.get("content") if imageTag else None
+        ratingTag = soup.find("meta", {"name": "twitter:data2"})
+        rating = ratingTag.get("content", "").removesuffix(" out of 5") if ratingTag else None
+        
+        moveDescriptionSoup = soup.find("div", class_="review")
+        taglineTag = moveDescriptionSoup.find("h4", class_="tagline") if moveDescriptionSoup else None
+        truncateDiv = moveDescriptionSoup.find("div", class_="truncate")
+        descriptionTag = truncateDiv.find("p") if truncateDiv else None
+        description = descriptionTag.get_text(strip=True) if descriptionTag else None
 
-        castSoup = soup.find("div", class_="cast-list").find_all("a", class_="text-slug tooltip")
+        tagline = taglineTag.get_text(" ", strip=True) if taglineTag else None
+        description = descriptionTag.get_text(" ", strip=True) if descriptionTag else None
+
+        castList = soup.find("div", class_="cast-list")
+        castSoup = castList.find_all("a", class_="text-slug tooltip") if castList else []
         cast = [actor.text.strip() for actor in castSoup]
 
-        directorsSoup = soup.find("span", class_="contributorlist").find_all("a", class_="contributor")
+        contributorList = soup.find("span", class_="contributorlist")
+        directorsSoup = contributorList.find_all("a", class_="contributor") if contributorList else []
         directors = [director.text.strip() for director in directorsSoup]
 
-        genresSoup = soup.find("div", id="tab-panel-genres").find_all("a", class_="text-slug")
+        genresPanel = soup.find("div", id="tab-panel-genres")
+        genresSoup = genresPanel.find_all("a", class_="text-slug") if genresPanel else []
         genres = [genre.text.strip() for genre in genresSoup]
 
         return {
             "title": title,
             "year": year,
+            "tagline": tagline,
+            "description": description,
             "image": imageUrl,
             "rating": rating,
             "cast": cast,

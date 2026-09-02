@@ -18,6 +18,9 @@ class GuessTheMovieFrontend:
         "rating": 15,
         "userRating": 15,
         "director": 10,
+        "genres": 10,
+        "tagline": 10,
+        "description": 20,
         "year": 10,
     }
 
@@ -32,6 +35,7 @@ class GuessTheMovieFrontend:
         )
         os.makedirs(self.app.config["SESSION_FILE_DIR"], exist_ok=True)
         Session(self.app)
+        self.app.jinja_env.filters["redact_names"] = self._redact_names
         self._register_routes()
 
     @staticmethod
@@ -54,6 +58,18 @@ class GuessTheMovieFrontend:
         from difflib import SequenceMatcher
         return SequenceMatcher(None, submitted_title, answer_title).ratio() >= 0.86
 
+    @staticmethod
+    def _redact_names(value, movie):
+        if not isinstance(value, str):
+            return value
+        names = [movie.get("title", ""), *movie.get("cast", [])]
+        title_words = movie.get("title", "").split()
+        if len(title_words) >= 2:
+            names.append(" ".join(title_words[:2]))
+        for name in sorted((name for name in names if isinstance(name, str) and name.strip()), key=len, reverse=True):
+            value = re.sub(re.escape(name), "*****", value, flags=re.IGNORECASE)
+        return value
+
     def _make_choices(self, movie, movie_names):
         correct = movie["title"]
         distractors = [name for name in movie_names if isinstance(name, str) and self._normalize_title(name) != self._normalize_title(correct)]
@@ -61,6 +77,12 @@ class GuessTheMovieFrontend:
         choices.append(correct)
         random.shuffle(choices)
         return choices
+
+    def _available_hint_costs(self, movie):
+        return {
+            name: cost for name, cost in self.HINT_COSTS.items()
+            if movie.get(name)
+        }
 
     def _top_250_movies(self):
         soup = self.scraper.getHtml(self.TOP_250_URL)
@@ -152,14 +174,21 @@ class GuessTheMovieFrontend:
         def game():
             if not session.get("round", {}).get("movie"):
                 return redirect(url_for("next_round"))
+            game_round = session["round"]
+            hint_total = sum(
+                self.HINT_COSTS[name]
+                for name in game_round.get("hints", [])
+                if name in self.HINT_COSTS
+            )
             return render_template(
                 "game.html",
-                round=session["round"],
+                round=game_round,
                 score=session.get("score", 0),
                 round_number=session.get("round_number", 0),
                 round_count=session.get("round_count", self.ROUND_DEFAULT),
                 mode=session.get("mode", "easy"),
-                hint_costs=self.HINT_COSTS,
+                hint_costs=self._available_hint_costs(session["round"]["movie"]),
+                round_points=max(0, 100 - hint_total),
             )
 
         @self.app.post("/guess")
@@ -187,7 +216,7 @@ class GuessTheMovieFrontend:
         @self.app.post("/hint/<hint_name>")
         def hint(hint_name):
             game_round = session.get("round", {})
-            if hint_name not in self.HINT_COSTS or not game_round or game_round.get("answered"):
+            if hint_name not in self.HINT_COSTS or not game_round or game_round.get("answered") or not game_round.get("movie", {}).get(hint_name):
                 return redirect(url_for("game"))
             if hint_name not in game_round["hints"]:
                 game_round["hints"].append(hint_name)
