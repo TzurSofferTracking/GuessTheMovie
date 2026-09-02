@@ -18,7 +18,7 @@ from flask import (
 from flask_session import Session
 
 from security import RequestRateLimiter
-from backend import LetterboxdScraper
+from backend import LetterboxdDownloadedData
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
@@ -63,7 +63,7 @@ def addSecurityHeaders(response):
     return response
 
 
-scraper = LetterboxdScraper()
+scraper = LetterboxdDownloadedData()
 ROUND_COUNT = 5
 HINT_COSTS = {
     "image": 25,

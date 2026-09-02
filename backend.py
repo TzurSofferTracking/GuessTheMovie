@@ -1,4 +1,8 @@
+import json
 import random
+import csv
+import re
+from pathlib import Path
 
 from bs4 import BeautifulSoup
 from curl_cffi import requests
@@ -161,21 +165,101 @@ class LetterboxdScraper(Scraper):
         return allMovies
 
 class LetterboxdDownloadedData(Template):
-    """ Data from https://letterboxd.com/data/export/ """
-    def loadRandomMovie(self, username):
-        soup = self.loadHtmlFromFile("letterboxd_movie.html")
-        return LetterboxdScraper()._loadMovieDetails(soup)
+    def __init__(self, database="db/database.json"):
+        with open(database, "r", encoding="utf-8") as file:
+            self.database = json.load(file)
 
-    def getAllUserMovieNames(self, username):
-        soup = self.loadHtmlFromFile("letterboxd_profile.html")
-        movieGrid = LetterboxdScraper()._getMovieGrid(soup)
-        movies = movieGrid.find_all("li", class_="griditem")
-        allMovies = []
-        for movieSoup in movies:
-            image = movieSoup.find("img")
-            movieName = image.get("alt", "").strip() if image else ""
-            if movieName:
-                allMovies.append(movieName)
-        if not allMovies:
-            raise ValueError("No movies were found in the downloaded data.")
-        return allMovies
+    def _loadExportedMovies(self, exportedJournal):
+        if hasattr(exportedJournal, "stream"):
+            # Flask FileStorage
+            exportedJournal.stream.seek(0)
+            text = exportedJournal.stream.read().decode("utf-8-sig")
+        elif hasattr(exportedJournal, "read"):
+            exportedJournal.seek(0)
+            data = exportedJournal.read()
+
+            if isinstance(data, bytes):
+                data = data.decode("utf-8-sig")
+
+            text = data
+        else:
+            with open(exportedJournal, "r", encoding="utf-8-sig") as file:
+                text = file.read()
+
+        reader = csv.DictReader(text.splitlines())
+
+        movies = {}
+
+        for row in reader:
+            title = (row.get("Name") or row.get("Title") or "").strip()
+            year = (row.get("Year") or "").strip()
+
+            if not title:
+                continue
+            if year:
+                key = title + year
+                movie = self.database.get(key)
+                movie["userRating"] = row.get("Rating") or None
+
+                if movie:
+                    movies[key] = movie
+        return movies
+
+    def loadRandomMovie(self, exportedJournal):
+        movies = self._loadExportedMovies(exportedJournal)
+
+        if not movies:
+            return None
+
+        key = random.choice(list(movies.keys()))
+        movie = movies[key].copy()
+        movie["userRating"] = None  # Reset user rating for the random movie
+        return 
+
+    def getAllUserMovieNames(self, exportedJournal):
+        movies = self._loadExportedMovies(exportedJournal)
+
+        return [
+            movie["title"]
+            for movie in movies.values()
+        ]
+
+def buildMovieDatabaseFromLetterboxdDump(fileName="db/db.jsonl", outputFileName="db/database.json"):
+    movies = {}
+    with open(fileName, "r", encoding="utf-8") as file:
+        for lineNumber, line in enumerate(file, start=1):
+            if not line.strip():
+                continue
+            try:
+                movie = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise ValueError(
+                    f"Invalid JSON on line {lineNumber} of {fileName}."
+                ) from error
+            
+            title = movie.get("title", None)
+            if title:
+                rating = movie.get("rating")
+                if type(rating) == str:
+                    rating = rating.removesuffix(" out of 5")
+                movie = {
+                    "url": movie.get("url"),
+                    "title": title,
+                    "year": movie.get("year"),
+                    "tagline": None,
+                    "description": movie.get("synopsis"),
+                    "image": movie.get("poster_url"),
+                    "rating": rating,
+                    "cast": movie.get("cast") or [],
+                    "directors": movie.get("directors") or [],
+                    "genres": movie.get("genres") or [],
+                    "reviews": movie.get("reviews") or []
+                }
+
+                movies[title+str(movie.get("year", 0))] = movie
+    
+    with open(outputFileName, "w", encoding="utf-8") as outfile:
+        json.dump(movies, outfile, ensure_ascii=False, indent=4)
+
+# if __name__ == "__main__":
+#     buildMovieDatabaseFromLetterboxdDump()
