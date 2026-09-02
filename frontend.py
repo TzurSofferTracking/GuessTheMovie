@@ -1,11 +1,14 @@
 import os
 import random
 import re
+import hmac
+import secrets
 import unicodedata
 
-from flask import Flask, flash, redirect, render_template, request, session, url_for
+from flask import Flask, abort, flash, redirect, render_template, request, session, url_for
 from flask_session import Session
 from scraper import LetterboxdScraper
+from security import RequestRateLimiter
 
 
 class GuessTheMovieFrontend:
@@ -27,16 +30,44 @@ class GuessTheMovieFrontend:
     def __init__(self, scraper=None):
         self.scraper = scraper or LetterboxdScraper()
         self.app = Flask(__name__)
-        self.app.secret_key = os.environ.get("FLASK_SECRET_KEY", "guess-the-movie-dev-key")
+        self.app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
         self.app.config.update(
             SESSION_TYPE="filesystem",
             SESSION_FILE_DIR=os.path.join(self.app.instance_path, "sessions"),
             SESSION_PERMANENT=False,
+            SESSION_COOKIE_SECURE=os.environ.get("FLASK_COOKIE_SECURE", "0") == "1",
+            SESSION_COOKIE_HTTPONLY=True,
+            SESSION_COOKIE_SAMESITE="Lax",
+            MAX_CONTENT_LENGTH=16 * 1024,
         )
         os.makedirs(self.app.config["SESSION_FILE_DIR"], exist_ok=True)
         Session(self.app)
+        self.limiter = RequestRateLimiter()
         self.app.jinja_env.filters["redact_names"] = self._redact_names
+        self._register_security_hooks()
         self._register_routes()
+
+    def _register_security_hooks(self):
+        @self.app.before_request
+        def protect_post_requests():
+            if request.method == "POST":
+                expected = session.get("csrf_token", "")
+                provided = request.form.get("csrf_token", "")
+                if not expected or not hmac.compare_digest(expected, provided):
+                    abort(400, description="Invalid form token.")
+
+        @self.app.context_processor
+        def inject_csrf_token():
+            token = session.setdefault("csrf_token", secrets.token_urlsafe(32))
+            return {"csrf_token": token}
+
+        @self.app.after_request
+        def add_security_headers(response):
+            response.headers.setdefault("X-Content-Type-Options", "nosniff")
+            response.headers.setdefault("X-Frame-Options", "DENY")
+            response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+            response.headers.setdefault("Content-Security-Policy", "default-src 'self'; img-src 'self' https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'")
+            return response
 
     @staticmethod
     def _normalize_title(title):
@@ -114,6 +145,7 @@ class GuessTheMovieFrontend:
 
     def _register_routes(self):
         @self.app.route("/", methods=["GET", "POST"])
+        @self.limiter.limit("10 per minute")
         def home():
             if request.method == "POST":
                 source = request.form.get("source", "user")
@@ -150,6 +182,7 @@ class GuessTheMovieFrontend:
             return render_template("home.html", round_options=self.ROUND_OPTIONS)
 
         @self.app.route("/round")
+        @self.limiter.limit("30 per minute")
         def next_round():
             if not session.get("source"):
                 return redirect(url_for("home"))
@@ -192,6 +225,7 @@ class GuessTheMovieFrontend:
             )
 
         @self.app.post("/guess")
+        @self.limiter.limit("60 per minute")
         def guess():
             game_round = session.get("round", {})
             if not game_round or game_round.get("answered"):
@@ -206,6 +240,7 @@ class GuessTheMovieFrontend:
             return redirect(url_for("game"))
 
         @self.app.post("/skip")
+        @self.limiter.limit("30 per minute")
         def skip():
             game_round = session.get("round", {})
             if game_round and not game_round.get("answered"):
@@ -214,6 +249,7 @@ class GuessTheMovieFrontend:
             return redirect(url_for("game"))
 
         @self.app.post("/hint/<hint_name>")
+        @self.limiter.limit("60 per minute")
         def hint(hint_name):
             game_round = session.get("round", {})
             if hint_name not in self.HINT_COSTS or not game_round or game_round.get("answered") or not game_round.get("movie", {}).get(hint_name):

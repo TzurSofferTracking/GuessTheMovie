@@ -15,6 +15,7 @@
         {% for category, message in messages %}<p class="alert {{ category }}">{{ message }}</p>{% endfor %}
     {% endwith %}
     <form method="post" class="settings-form" id="start-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="source" value="user">
         <div class="input-row username-row">
             <span>letterboxd.com/</span>

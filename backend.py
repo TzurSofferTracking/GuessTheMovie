@@ -1,22 +1,54 @@
 import os
 import re
 import random
+import secrets
+import hmac
 from difflib import SequenceMatcher
 import unicodedata
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from flask import Flask, abort, render_template, request, redirect, url_for, session, flash
 from flask_session import Session
 from scraper import LetterboxdScraper
+from security import RequestRateLimiter
 
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "guess-the-movie-dev-key")
+app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
 app.config.update(
     SESSION_TYPE="filesystem",
     SESSION_FILE_DIR=os.path.join(app.instance_path, "sessions"),
     SESSION_PERMANENT=False,
+    SESSION_COOKIE_SECURE=os.environ.get("FLASK_COOKIE_SECURE", "0") == "1",
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    MAX_CONTENT_LENGTH=16 * 1024,
 )
 os.makedirs(app.config["SESSION_FILE_DIR"], exist_ok=True)
 Session(app)
+limiter = RequestRateLimiter()
+
+
+@app.before_request
+def protect_post_requests():
+    if request.method == "POST":
+        expected = session.get("csrf_token", "")
+        provided = request.form.get("csrf_token", "")
+        if not expected or not hmac.compare_digest(expected, provided):
+            abort(400, description="Invalid form token.")
+
+
+@app.context_processor
+def inject_csrf_token():
+    token = session.setdefault("csrf_token", secrets.token_urlsafe(32))
+    return {"csrf_token": token}
+
+
+@app.after_request
+def add_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Content-Security-Policy", "default-src 'self'; img-src 'self' https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'")
+    return response
 scraper = LetterboxdScraper()
 ROUND_COUNT = 5
 HINT_COSTS = {"image": 25, "cast": 20, "rating": 15, "userRating": 15, "director": 10, "genres": 10, "tagline": 10, "description": 20, "year": 10}
@@ -74,6 +106,7 @@ def make_choices(movie, movie_names):
 
 
 @app.route("/", methods=["GET", "POST"])
+@limiter.limit("10 per minute")
 def home():
     if request.method == "POST":
         username = request.form.get("username", "").strip().strip("/")
@@ -102,6 +135,7 @@ def home():
 
 
 @app.route("/round")
+@limiter.limit("30 per minute")
 def next_round():
     if not session.get("username"):
         return redirect(url_for("home"))
@@ -138,6 +172,7 @@ def game():
 
 
 @app.post("/guess")
+@limiter.limit("60 per minute")
 def guess():
     game_round = session.get("round", {})
     if not game_round or game_round.get("answered"):
@@ -153,6 +188,7 @@ def guess():
 
 
 @app.post("/skip")
+@limiter.limit("30 per minute")
 def skip():
     game_round = session.get("round", {})
     if game_round and not game_round.get("answered"):
@@ -162,6 +198,7 @@ def skip():
 
 
 @app.post("/hint/<hint_name>")
+@limiter.limit("60 per minute")
 def hint(hint_name):
     game_round = session.get("round", {})
     if hint_name not in HINT_COSTS or not game_round or game_round.get("answered") or not has_hint_value(game_round.get("movie", {}), hint_name):
@@ -180,4 +217,5 @@ def results():
     return render_template("results.html", score=session.get("score", 0), round_count=ROUND_COUNT)
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=False)
+    # app.run(debug=True)

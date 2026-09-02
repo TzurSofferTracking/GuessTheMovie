@@ -27,7 +27,7 @@ class Scraper:
 
 class LetterboxdScraper(Scraper):
     def getHtml(self, url):
-        response = requests.get(url, impersonate="chrome120")
+        response = requests.get(url, impersonate="chrome120", timeout=15)
         return BeautifulSoup(response.text, "html.parser")
 
     def _loadMovieDetails(self, movieUrl):

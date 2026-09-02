@@ -2,3 +2,6 @@ db/
 .history/
 __pycache__/
 instance/
+.env
+.env.*
+*.log

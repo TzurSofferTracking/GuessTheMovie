@@ -1,5 +1,6 @@
 requests
-bs4
+beautifulsoup4
 flask
 Flask-Session
 curl_cffi
+waitress
