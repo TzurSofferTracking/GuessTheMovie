@@ -21,12 +21,17 @@ HINT_COSTS = {"cast": 20, "rating": 15, "userRating": 15, "director": 10, "year"
 
 
 def title_without_year(title):
+    if not isinstance(title, str):
+        return ""
     return re.sub(r"\s*\(\d{4}\)$", "", title).strip().casefold()
 
 
 def make_choices(movie, movie_names):
     correct = f"{movie['title']} ({movie['year']})"
-    distractors = [name for name in movie_names if title_without_year(name) != title_without_year(correct)]
+    distractors = [
+        name for name in movie_names
+        if isinstance(name, str) and title_without_year(name) != title_without_year(correct)
+    ]
     choices = random.sample(distractors, min(3, len(distractors)))
     choices.append(correct)
     random.shuffle(choices)
@@ -89,6 +94,15 @@ def guess():
     session["round"] = game_round
     if correct:
         session["score"] = session.get("score", 0) + 100
+    return redirect(url_for("game"))
+
+
+@app.post("/skip")
+def skip():
+    game_round = session.get("round", {})
+    if game_round and not game_round.get("answered"):
+        game_round.update({"answered": True, "correct": False, "skipped": True})
+        session["round"] = game_round
     return redirect(url_for("game"))
 
 

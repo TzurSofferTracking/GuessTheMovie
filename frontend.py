@@ -1,6 +1,7 @@
 import os
 import random
 import re
+import unicodedata
 
 from flask import Flask, flash, redirect, render_template, request, session, url_for
 from flask_session import Session
@@ -35,11 +36,27 @@ class GuessTheMovieFrontend:
 
     @staticmethod
     def _normalize_title(title):
-        return re.sub(r"\s*\(\d{4}\)$", "", title).strip().casefold()
+        if not isinstance(title, str):
+            return ""
+        title = re.sub(r"\s*\(\d{4}\)$", "", title)
+        title = unicodedata.normalize("NFKD", title)
+        title = "".join(character for character in title if not unicodedata.combining(character))
+        return re.sub(r"[^a-z0-9]", "", title.casefold())
+
+    @classmethod
+    def _titles_match(cls, submitted, answer):
+        submitted_title = cls._normalize_title(submitted)
+        answer_title = cls._normalize_title(answer)
+        if not submitted_title or not answer_title:
+            return False
+        if submitted_title == answer_title:
+            return True
+        from difflib import SequenceMatcher
+        return SequenceMatcher(None, submitted_title, answer_title).ratio() >= 0.86
 
     def _make_choices(self, movie, movie_names):
         correct = movie["title"]
-        distractors = [name for name in movie_names if self._normalize_title(name) != self._normalize_title(correct)]
+        distractors = [name for name in movie_names if isinstance(name, str) and self._normalize_title(name) != self._normalize_title(correct)]
         choices = random.sample(distractors, min(3, len(distractors)))
         choices.append(correct)
         random.shuffle(choices)
@@ -87,17 +104,17 @@ class GuessTheMovieFrontend:
                 if source == "user" and not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", username):
                     flash("Enter a valid Letterboxd username.", "error")
                     return render_template("home.html")
-                if round_count not in self.ROUND_OPTIONS or mode not in ("easy", "hard") or source not in ("user", "top250"):
+                if not 1 <= round_count <= 50 or mode not in ("easy", "hard") or source != "user":
                     flash("Choose valid game settings.", "error")
                     return render_template("home.html")
                 try:
-                    movie_names = [] if source == "top250" else self.scraper.getAllUserMovieNames(username)
-                    if source == "user" and len(movie_names) < 4:
+                    movie_names = self.scraper.getAllUserMovieNames(username)
+                    if len(movie_names) < 4:
                         raise ValueError("This profile does not have enough films for a game.")
                     session.clear()
                     session.update({
-                        "username": username if source == "user" else "Letterboxd Top 250",
-                        "source": source,
+                        "username": username,
+                        "source": "user",
                         "mode": mode,
                         "round_count": round_count,
                         "movie_names": movie_names,
@@ -117,10 +134,7 @@ class GuessTheMovieFrontend:
             if session.get("round_number", 0) >= session.get("round_count", self.ROUND_DEFAULT):
                 return redirect(url_for("results"))
             try:
-                if session["source"] == "top250":
-                    movie, movie_names = self._load_top_250_movie()
-                else:
-                    movie, movie_names = self._load_user_movie(session["username"], session["movie_names"])
+                movie, movie_names = self._load_user_movie(session["username"], session["movie_names"])
                 session["round_number"] = session.get("round_number", 0) + 1
                 session["round"] = {
                     "movie": movie,
@@ -155,11 +169,19 @@ class GuessTheMovieFrontend:
                 return redirect(url_for("game"))
             selected = request.form.get("answer", "").strip()
             movie = game_round["movie"]
-            correct = self._normalize_title(selected) == self._normalize_title(movie["title"])
+            correct = self._titles_match(selected, movie["title"])
             game_round.update({"answered": True, "correct": correct})
             session["round"] = game_round
             if correct:
                 session["score"] = session.get("score", 0) + 100
+            return redirect(url_for("game"))
+
+        @self.app.post("/skip")
+        def skip():
+            game_round = session.get("round", {})
+            if game_round and not game_round.get("answered"):
+                game_round.update({"answered": True, "correct": False, "skipped": True})
+                session["round"] = game_round
             return redirect(url_for("game"))
 
         @self.app.post("/hint/<hint_name>")
