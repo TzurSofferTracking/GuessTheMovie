@@ -1,0 +1,25 @@
+{
+    "result": true,
+    "csrf": "8bae12befa26bd3ff72e",
+    "lid": "2a6G",
+    "uid": "film:51551",
+    "type": "film",
+    "typeName": "film",
+    "id": 51551,
+    "name": "Apollo13",
+    "image125": "/film/apollo-13/image-125/",
+    "image150": "/film/apollo-13/image-150/",
+    "image230": "/film/apollo-13/image-230/",
+    "releaseYear": 1995,
+    "runTime": 140,
+    "slug": "apollo-13",
+    "url": "/film/apollo-13/",
+    "filmlistAction": "null",
+    "originalName": null,
+    "watchlistAction": "/film/apollo-13/add-to-watchlist/",
+    "directors": [
+        {
+            "name": "Ron Howard"
+        }
+    ]
+}

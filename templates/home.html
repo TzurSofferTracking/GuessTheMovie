@@ -1,0 +1,5 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Guess the Movie</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
+<body class="landing"><main class="shell intro"><p class="eyebrow">LETTERBOXD MEMORY GAME</p><h1>How well do you know<br><em>their</em> movies?</h1><p class="lede">Enter a public Letterboxd profile. Five rounds. One hundred points for every film you can place.</p>{% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<p class="alert {{ category }}">{{ message }}</p>{% endfor %}{% endwith %}<form method="post" class="username-form"><label for="username">Letterboxd username</label><div class="input-row"><span>letterboxd.com/</span><input id="username" name="username" placeholder="username" required autofocus><button type="submit">Start game <span>-></span></button></div></form><div class="rules"><span>05 ROUNDS</span><span>+100 CORRECT</span><span>HINTS COST POINTS</span></div></main></body>
+</html>
