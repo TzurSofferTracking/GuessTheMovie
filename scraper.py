@@ -28,12 +28,24 @@ class Scraper:
 class LetterboxdScraper(Scraper):
     def getHtml(self, url):
         response = requests.get(url, impersonate="chrome120", timeout=15)
+        response.raise_for_status()
         return BeautifulSoup(response.text, "html.parser")
+
+    @staticmethod
+    def _getMovieGrid(soup):
+        movieGrid = soup.find("div", class_="poster-grid")
+        if movieGrid is None:
+            raise ValueError("Letterboxd did not return a movie list. The profile may be private or temporarily blocked.")
+        return movieGrid
 
     def _loadMovieDetails(self, movieUrl):
         soup = self.getHtml(movieUrl)
-        title = soup.find("h1", class_="headline-1").text.strip()
-        year = soup.find("span", class_="releasedate").text.strip()
+        titleTag = soup.find("h1", class_="headline-1")
+        title = titleTag.get_text(" ", strip=True) if titleTag else ""
+        yearTag = soup.find("span", class_="releasedate")
+        year = yearTag.get_text(" ", strip=True) if yearTag else ""
+        if not title:
+            raise ValueError("Letterboxd returned a movie page without a title.")
         imageTag = soup.find("meta", {"property": "og:image"})
         imageUrl = imageTag.get("content") if imageTag else None
         ratingTag = soup.find("meta", {"name": "twitter:data2"})
@@ -41,7 +53,7 @@ class LetterboxdScraper(Scraper):
         
         moveDescriptionSoup = soup.find("div", class_="review")
         taglineTag = moveDescriptionSoup.find("h4", class_="tagline") if moveDescriptionSoup else None
-        truncateDiv = moveDescriptionSoup.find("div", class_="truncate")
+        truncateDiv = moveDescriptionSoup.find("div", class_="truncate") if moveDescriptionSoup else None
         descriptionTag = truncateDiv.find("p") if truncateDiv else None
         description = descriptionTag.get_text(strip=True) if descriptionTag else None
 
@@ -87,10 +99,15 @@ class LetterboxdScraper(Scraper):
         url = f"https://letterboxd.com/{username}/films/page/{userPage}/"
 
         soup = self.getHtml(url)
-        movieGrid = soup.find("div", class_="poster-grid")
+        movieGrid = self._getMovieGrid(soup)
         movies = movieGrid.find_all("li", class_="griditem")
+        if not movies:
+            raise ValueError("No movies were found on this Letterboxd profile.")
         movieSoup = random.choice(movies)
-        movieUrl = movieSoup.find("div", class_="react-component").get("data-item-link")
+        component = movieSoup.find("div", class_="react-component")
+        movieUrl = component.get("data-item-link") if component else None
+        if not movieUrl:
+            raise ValueError("Letterboxd returned a movie without a valid link.")
         fullMovieUrl = f"https://letterboxd.com{movieUrl}"
 
         movie = self._loadMovieDetails(fullMovieUrl)
@@ -106,10 +123,13 @@ class LetterboxdScraper(Scraper):
         for userPage in range(1, pageCount + 1):
             url = f"https://letterboxd.com/{username}/films/page/{userPage}/"
             soup = self.getHtml(url)
-            movieGrid = soup.find("div", class_="poster-grid")
+            movieGrid = self._getMovieGrid(soup)
             movies = movieGrid.find_all("li", class_="griditem")
             for movieSoup in movies:
-                movieName = movieSoup.find("img").get("alt")
-                allMovies.append(movieName)
-                print(allMovies)
+                image = movieSoup.find("img")
+                movieName = image.get("alt", "").strip() if image else ""
+                if movieName:
+                    allMovies.append(movieName)
+        if not allMovies:
+            raise ValueError("No movies were found on this Letterboxd profile.")
         return allMovies
