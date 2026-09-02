@@ -1,4 +1,3 @@
-from backend import app
-
+from frontend import app
 
 application = app

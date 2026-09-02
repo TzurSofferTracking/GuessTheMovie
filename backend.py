@@ -1,221 +1,181 @@
-import os
-import re
 import random
-import secrets
-import hmac
-from difflib import SequenceMatcher
-import unicodedata
-from flask import Flask, abort, render_template, request, redirect, url_for, session, flash
-from flask_session import Session
-from scraper import LetterboxdScraper
-from security import RequestRateLimiter
+
+from bs4 import BeautifulSoup
+from curl_cffi import requests
 
 
-app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
-app.config.update(
-    SESSION_TYPE="filesystem",
-    SESSION_FILE_DIR=os.path.join(app.instance_path, "sessions"),
-    SESSION_PERMANENT=False,
-    SESSION_COOKIE_SECURE=os.environ.get("FLASK_COOKIE_SECURE", "0") == "1",
-    SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE="Lax",
-    MAX_CONTENT_LENGTH=16 * 1024,
-)
-os.makedirs(app.config["SESSION_FILE_DIR"], exist_ok=True)
-Session(app)
-limiter = RequestRateLimiter()
+class Template:
+    def loadRandomMovie(self, username):
+        raise NotImplementedError("This method should be implemented in a subclass.")
 
+    def getAllUserMovieNames(self, username):
+        raise NotImplementedError("This method should be implemented in a subclass.")
 
-@app.before_request
-def protect_post_requests():
-    if request.method == "POST":
-        expected = session.get("csrf_token", "")
-        provided = request.form.get("csrf_token", "")
-        if not expected or not hmac.compare_digest(expected, provided):
-            abort(400, description="Invalid form token.")
+    def save(self, soup):
+        raise NotImplementedError("This method should be implemented in a subclass.")
 
+class Scraper(Template):
+    def loadHtmlFromFile(self, fileName):
+        with open(fileName, "r", encoding="utf-8") as file:
+            return BeautifulSoup(file.read(), "html.parser")
 
-@app.context_processor
-def inject_csrf_token():
-    token = session.setdefault("csrf_token", secrets.token_urlsafe(32))
-    return {"csrf_token": token}
+    def getHtml(self, url):
+        raise NotImplementedError("This method should be implemented in a subclass.")
 
+    def save(self, soup):
+        fileName = soup.get("class", ["No-Class"])[0] + ".html"
+        with open(fileName, "w", encoding="utf-8") as file:
+            file.write(soup.prettify())
 
-@app.after_request
-def add_security_headers(response):
-    response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Frame-Options", "DENY")
-    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-    response.headers.setdefault("Content-Security-Policy", "default-src 'self'; img-src 'self' https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'")
-    return response
-scraper = LetterboxdScraper()
-ROUND_COUNT = 5
-HINT_COSTS = {"image": 25, "cast": 20, "rating": 15, "userRating": 15, "director": 10, "genres": 10, "tagline": 10, "description": 20, "year": 10}
+class LetterboxdScraper(Scraper):
+    def getHtml(self, url):
+        response = requests.get(url, impersonate="chrome120", timeout=15)
+        response.raise_for_status()
+        return BeautifulSoup(response.text, "html.parser")
 
+    @staticmethod
+    def _getMovieGrid(soup):
+        movieGrid = soup.find("div", class_="poster-grid")
+        if movieGrid is None:
+            raise ValueError(
+                "Letterboxd did not return a movie list. The profile may be private or temporarily blocked."
+            )
+        return movieGrid
 
-def has_hint_value(movie, hint_name):
-    value = movie.get(hint_name)
-    return bool(value)
+    def _loadMovieDetails(self, movieUrl):
+        soup = self.getHtml(movieUrl)
+        titleTag = soup.find("h1", class_="headline-1")
+        title = titleTag.get_text(" ", strip=True) if titleTag else ""
+        yearTag = soup.find("span", class_="releasedate")
+        year = yearTag.get_text(" ", strip=True) if yearTag else ""
+        if not title:
+            raise ValueError("Letterboxd returned a movie page without a title.")
+        imageTag = soup.find("meta", {"property": "og:image"})
+        imageUrl = imageTag.get("content") if imageTag else None
+        ratingTag = soup.find("meta", {"name": "twitter:data2"})
+        rating = (
+            ratingTag.get("content", "").removesuffix(" out of 5")
+            if ratingTag
+            else None
+        )
 
+        movieDescriptionSoup = soup.find("div", class_="review")
+        taglineTag = (
+            movieDescriptionSoup.find("h4", class_="tagline")
+            if movieDescriptionSoup
+            else None
+        )
+        truncateDiv = (
+            movieDescriptionSoup.find("div", class_="truncate")
+            if movieDescriptionSoup
+            else None
+        )
+        descriptionTag = truncateDiv.find("p") if truncateDiv else None
+        description = descriptionTag.get_text(strip=True) if descriptionTag else None
 
-def redact_names(value, movie):
-    if not isinstance(value, str):
-        return value
-    names = [movie.get("title", ""), *movie.get("cast", [])]
-    title_words = movie.get("title", "").split()
-    if len(title_words) >= 2:
-        names.append(" ".join(title_words[:2]))
-    for name in sorted((name for name in names if isinstance(name, str) and name.strip()), key=len, reverse=True):
-        value = re.sub(re.escape(name), "*****", value, flags=re.IGNORECASE)
-    return value
+        tagline = taglineTag.get_text(" ", strip=True) if taglineTag else None
+        description = (
+            descriptionTag.get_text(" ", strip=True) if descriptionTag else None
+        )
 
+        castList = soup.find("div", class_="cast-list")
+        castSoup = (
+            castList.find_all("a", class_="text-slug tooltip") if castList else []
+        )
+        cast = [actor.text.strip() for actor in castSoup]
 
-app.jinja_env.filters["redact_names"] = redact_names
+        contributorList = soup.find("span", class_="contributorlist")
+        directorsSoup = (
+            contributorList.find_all("a", class_="contributor")
+            if contributorList
+            else []
+        )
+        directors = [director.text.strip() for director in directorsSoup]
 
+        genresPanel = soup.find("div", id="tab-panel-genres")
+        genresSoup = (
+            genresPanel.find_all("a", class_="text-slug") if genresPanel else []
+        )
+        genres = [genre.text.strip() for genre in genresSoup]
 
-def title_without_year(title):
-    if not isinstance(title, str):
-        return ""
-    title = re.sub(r"\s*\(\d{4}\)$", "", title)
-    title = unicodedata.normalize("NFKD", title)
-    title = "".join(character for character in title if not unicodedata.combining(character))
-    return re.sub(r"[^a-z0-9]", "", title.casefold())
+        return {
+            "title": title,
+            "year": year,
+            "tagline": tagline,
+            "description": description,
+            "image": imageUrl,
+            "rating": rating,
+            "cast": cast,
+            "directors": directors,
+            "genres": genres,
+            "userRating": None,
+        }
 
+    def _getPageCountForUser(self, username):
+        url = f"https://letterboxd.com/{username}/films/"
+        soup = self.getHtml(url)
+        pages = soup.find_all("li", class_="paginate-page")
+        if len(pages) == 0:
+            return 1
+        return int(pages[-1].text.strip())
 
-def titles_match(submitted, answer):
-    submitted_title = title_without_year(submitted)
-    answer_title = title_without_year(answer)
-    if not submitted_title or not answer_title:
-        return False
-    if submitted_title == answer_title:
-        return True
-    return SequenceMatcher(None, submitted_title, answer_title).ratio() >= 0.86
+    def loadRandomMovie(self, username):
+        pageCount = self._getPageCountForUser(username)
+        userPage = random.randint(1, pageCount)
+        url = f"https://letterboxd.com/{username}/films/page/{userPage}/"
 
+        soup = self.getHtml(url)
+        movieGrid = self._getMovieGrid(soup)
+        movies = movieGrid.find_all("li", class_="griditem")
+        if not movies:
+            raise ValueError("No movies were found on this Letterboxd profile.")
+        movieSoup = random.choice(movies)
+        component = movieSoup.find("div", class_="react-component")
+        movieUrl = component.get("data-item-link") if component else None
+        if not movieUrl:
+            raise ValueError("Letterboxd returned a movie without a valid link.")
+        fullMovieUrl = f"https://letterboxd.com{movieUrl}"
 
-def make_choices(movie, movie_names):
-    correct = movie["title"]
-    distractors = [
-        name for name in movie_names
-        if isinstance(name, str) and title_without_year(name) != title_without_year(correct)
-    ]
-    choices = random.sample(distractors, min(3, len(distractors)))
-    choices.append(correct)
-    random.shuffle(choices)
-    return choices
+        movie = self._loadMovieDetails(fullMovieUrl)
+        rating = movieSoup.find("span", class_="rating")
+        if rating:
+            ratingText = rating.text.strip()
+            movie["userRating"] = ratingText.count("★") + ratingText.count("½") / 2
+        return movie
 
+    def getAllUserMovieNames(self, username):
+        pageCount = self._getPageCountForUser(username)
+        allMovies = []
+        for userPage in range(1, pageCount + 1):
+            url = f"https://letterboxd.com/{username}/films/page/{userPage}/"
+            soup = self.getHtml(url)
+            movieGrid = self._getMovieGrid(soup)
+            movies = movieGrid.find_all("li", class_="griditem")
+            for movieSoup in movies:
+                image = movieSoup.find("img")
+                movieName = image.get("alt", "").strip() if image else ""
+                if movieName:
+                    allMovies.append(movieName)
+        if not allMovies:
+            raise ValueError("No movies were found on this Letterboxd profile.")
+        return allMovies
 
-@app.route("/", methods=["GET", "POST"])
-@limiter.limit("10 per minute")
-def home():
-    if request.method == "POST":
-        username = request.form.get("username", "").strip().strip("/")
-        mode = request.form.get("mode", "easy")
-        try:
-            round_count = int(request.form.get("round_count", ROUND_COUNT))
-        except ValueError:
-            round_count = ROUND_COUNT
-        if mode not in ("easy", "hard") or not 1 <= round_count <= 50:
-            flash("Choose valid game settings.", "error")
-            return render_template("home.html")
-        if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", username):
-            flash("Enter a valid Letterboxd username.", "error")
-            return render_template("home.html")
-        try:
-            movies = scraper.getAllUserMovieNames(username)
-            if len(movies) < 4:
-                raise ValueError("This profile does not have enough films for a game.")
-            session.clear()
-            session.update({"username": username, "movie_names": movies, "round_number": 0, "round_count": round_count, "mode": mode, "score": 0})
-            return redirect(url_for("next_round"))
-        except Exception as error:
-            app.logger.exception("Could not load Letterboxd profile")
-            flash(f"Could not load that profile: {error}", "error")
-    return render_template("home.html")
+class LetterboxdDownloadedData(Template):
+    """ Data from https://letterboxd.com/data/export/ """
+    def loadRandomMovie(self, username):
+        soup = self.loadHtmlFromFile("letterboxd_movie.html")
+        return LetterboxdScraper()._loadMovieDetails(soup)
 
-
-@app.route("/round")
-@limiter.limit("30 per minute")
-def next_round():
-    if not session.get("username"):
-        return redirect(url_for("home"))
-    if session.get("round_number", 0) >= session.get("round_count", ROUND_COUNT):
-        return redirect(url_for("results"))
-    try:
-        movie = scraper.loadRandomMovie(session["username"])
-        session["round_number"] = session.get("round_number", 0) + 1
-        session["round"] = {"movie": movie, "choices": make_choices(movie, session["movie_names"]), "hints": [], "answered": False}
-        return redirect(url_for("game"))
-    except Exception as error:
-        app.logger.exception("Could not load game round")
-        flash(f"Could not load a movie right now: {error}", "error")
-        return redirect(url_for("home"))
-
-
-@app.route("/game")
-def game():
-    if not session.get("round", {}).get("movie"):
-        return redirect(url_for("next_round"))
-    game_round = session["round"]
-    hint_total = sum(HINT_COSTS[name] for name in game_round.get("hints", []) if name in HINT_COSTS)
-    return render_template(
-        "game.html",
-        round=game_round,
-        score=session.get("score", 0),
-        round_number=session.get("round_number", 0),
-        round_count=session.get("round_count", ROUND_COUNT),
-        mode=session.get("mode", "easy"),
-        hint_costs={name: cost for name, cost in HINT_COSTS.items() if has_hint_value(game_round["movie"], name)},
-        movie_names=[name for name in session.get("movie_names", []) if isinstance(name, str)],
-        round_points=max(0, 100 - hint_total),
-    )
-
-
-@app.post("/guess")
-@limiter.limit("60 per minute")
-def guess():
-    game_round = session.get("round", {})
-    if not game_round or game_round.get("answered"):
-        return redirect(url_for("game"))
-    selected = request.form.get("answer", "")
-    movie = game_round["movie"]
-    correct = titles_match(selected, movie["title"])
-    game_round.update({"answered": True, "correct": correct})
-    session["round"] = game_round
-    if correct:
-        session["score"] = session.get("score", 0) + 100
-    return redirect(url_for("game"))
-
-
-@app.post("/skip")
-@limiter.limit("30 per minute")
-def skip():
-    game_round = session.get("round", {})
-    if game_round and not game_round.get("answered"):
-        game_round.update({"answered": True, "correct": False, "skipped": True})
-        session["round"] = game_round
-    return redirect(url_for("game"))
-
-
-@app.post("/hint/<hint_name>")
-@limiter.limit("60 per minute")
-def hint(hint_name):
-    game_round = session.get("round", {})
-    if hint_name not in HINT_COSTS or not game_round or game_round.get("answered") or not has_hint_value(game_round.get("movie", {}), hint_name):
-        return redirect(url_for("game"))
-    if hint_name not in game_round["hints"]:
-        game_round["hints"].append(hint_name)
-        session["score"] = max(0, session.get("score", 0) - HINT_COSTS[hint_name])
-        session["round"] = game_round
-    return redirect(url_for("game"))
-
-
-@app.route("/results")
-def results():
-    if not session.get("username"):
-        return redirect(url_for("home"))
-    return render_template("results.html", score=session.get("score", 0), round_count=ROUND_COUNT)
-
-if __name__ == "__main__":
-    app.run(debug=False)
-    # app.run(debug=True)
+    def getAllUserMovieNames(self, username):
+        soup = self.loadHtmlFromFile("letterboxd_profile.html")
+        movieGrid = LetterboxdScraper()._getMovieGrid(soup)
+        movies = movieGrid.find_all("li", class_="griditem")
+        allMovies = []
+        for movieSoup in movies:
+            image = movieSoup.find("img")
+            movieName = image.get("alt", "").strip() if image else ""
+            if movieName:
+                allMovies.append(movieName)
+        if not allMovies:
+            raise ValueError("No movies were found in the downloaded data.")
+        return allMovies

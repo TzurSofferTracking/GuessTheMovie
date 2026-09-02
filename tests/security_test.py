@@ -1,6 +1,6 @@
 import unittest
 
-import backend
+import frontend
 
 
 class FakeScraper:
@@ -29,17 +29,17 @@ class FakeScraper:
 class SecurityEndpointTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.original_scraper = backend.scraper
-        backend.app.config.update(TESTING=True, SESSION_COOKIE_SECURE=False)
+        cls.original_scraper = frontend.scraper
+        frontend.app.config.update(TESTING=True, SESSION_COOKIE_SECURE=False)
 
     @classmethod
     def tearDownClass(cls):
-        backend.scraper = cls.original_scraper
+        frontend.scraper = cls.original_scraper
 
     def setUp(self):
-        backend.scraper = FakeScraper()
-        backend.limiter._requests.clear()
-        self.client = backend.app.test_client()
+        frontend.scraper = FakeScraper()
+        frontend.limiter._requests.clear()
+        self.client = frontend.app.test_client()
 
     def csrf_token(self):
         self.client.get("/")
@@ -56,23 +56,51 @@ class SecurityEndpointTests(unittest.TestCase):
         self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
 
     def test_post_requires_csrf_and_rejects_injection_username(self):
-        self.assertEqual(self.client.post("/", data={"username": "alice"}).status_code, 400)
+        self.assertEqual(
+            self.client.post("/", data={"username": "alice"}).status_code, 400
+        )
         token = self.csrf_token()
         response = self.client.post(
             "/",
-            data={"csrf_token": token, "username": "<script>alert(1)</script>", "mode": "easy", "round_count": "5"},
+            data={
+                "csrf_token": token,
+                "username": "<script>alert(1)</script>",
+                "mode": "easy",
+                "round_count": "5",
+            },
         )
         self.assertEqual(response.status_code, 200)
         self.assertNotIn(b"<script>alert(1)</script>", response.data)
 
     def test_game_post_endpoints_and_malformed_values(self):
         token = self.csrf_token()
-        self.client.post("/", data={"csrf_token": token, "username": "alice", "mode": "easy", "round_count": "1"})
+        self.client.post(
+            "/",
+            data={
+                "csrf_token": token,
+                "username": "alice",
+                "mode": "easy",
+                "round_count": "1",
+            },
+        )
         self.client.get("/round")
         token = self.csrf_token()
-        self.assertEqual(self.client.post("/hint/%3Cscript%3E", data={"csrf_token": token}).status_code, 302)
-        self.assertEqual(self.client.post("/guess", data={"csrf_token": token, "answer": "<script>alert(1)</script>"}).status_code, 302)
-        self.assertEqual(self.client.post("/skip", data={"csrf_token": token}).status_code, 302)
+        self.assertEqual(
+            self.client.post(
+                "/hint/%3Cscript%3E", data={"csrf_token": token}
+            ).status_code,
+            302,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/guess",
+                data={"csrf_token": token, "answer": "<script>alert(1)</script>"},
+            ).status_code,
+            302,
+        )
+        self.assertEqual(
+            self.client.post("/skip", data={"csrf_token": token}).status_code, 302
+        )
 
     def test_post_methods_are_restricted(self):
         self.assertEqual(self.client.get("/guess").status_code, 405)
