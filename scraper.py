@@ -32,7 +32,6 @@ class LetterboxdScraper(Scraper):
 
     def _loadMovieDetails(self, movieUrl):
         soup = self.getHtml(movieUrl)
-        self.save(soup)
         title = soup.find("h1", class_="headline-1").text.strip()
         year = soup.find("span", class_="releasedate").text.strip()
         imageTag = soup.find("meta", {"property": "og:image"})
@@ -108,7 +107,6 @@ class LetterboxdScraper(Scraper):
             url = f"https://letterboxd.com/{username}/films/page/{userPage}/"
             soup = self.getHtml(url)
             movieGrid = soup.find("div", class_="poster-grid")
-            self.save(movieGrid)
             movies = movieGrid.find_all("li", class_="griditem")
             for movieSoup in movies:
                 movieName = movieSoup.find("img").get("alt")
