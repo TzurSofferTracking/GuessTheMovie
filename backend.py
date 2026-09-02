@@ -1,6 +1,8 @@
 import os
 import re
 import random
+from difflib import SequenceMatcher
+import unicodedata
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 from flask_session import Session
 from scraper import LetterboxdScraper
@@ -17,17 +19,30 @@ os.makedirs(app.config["SESSION_FILE_DIR"], exist_ok=True)
 Session(app)
 scraper = LetterboxdScraper()
 ROUND_COUNT = 5
-HINT_COSTS = {"cast": 20, "rating": 15, "userRating": 15, "director": 10, "year": 10}
+HINT_COSTS = {"image": 25, "cast": 20, "rating": 15, "userRating": 15, "director": 10, "year": 10}
 
 
 def title_without_year(title):
     if not isinstance(title, str):
         return ""
-    return re.sub(r"\s*\(\d{4}\)$", "", title).strip().casefold()
+    title = re.sub(r"\s*\(\d{4}\)$", "", title)
+    title = unicodedata.normalize("NFKD", title)
+    title = "".join(character for character in title if not unicodedata.combining(character))
+    return re.sub(r"[^a-z0-9]", "", title.casefold())
+
+
+def titles_match(submitted, answer):
+    submitted_title = title_without_year(submitted)
+    answer_title = title_without_year(answer)
+    if not submitted_title or not answer_title:
+        return False
+    if submitted_title == answer_title:
+        return True
+    return SequenceMatcher(None, submitted_title, answer_title).ratio() >= 0.86
 
 
 def make_choices(movie, movie_names):
-    correct = f"{movie['title']} ({movie['year']})"
+    correct = movie["title"]
     distractors = [
         name for name in movie_names
         if isinstance(name, str) and title_without_year(name) != title_without_year(correct)
@@ -42,6 +57,14 @@ def make_choices(movie, movie_names):
 def home():
     if request.method == "POST":
         username = request.form.get("username", "").strip().strip("/")
+        mode = request.form.get("mode", "easy")
+        try:
+            round_count = int(request.form.get("round_count", ROUND_COUNT))
+        except ValueError:
+            round_count = ROUND_COUNT
+        if mode not in ("easy", "hard") or not 1 <= round_count <= 50:
+            flash("Choose valid game settings.", "error")
+            return render_template("home.html")
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", username):
             flash("Enter a valid Letterboxd username.", "error")
             return render_template("home.html")
@@ -50,7 +73,7 @@ def home():
             if len(movies) < 4:
                 raise ValueError("This profile does not have enough films for a game.")
             session.clear()
-            session.update({"username": username, "movie_names": movies, "round_number": 0, "score": 0})
+            session.update({"username": username, "movie_names": movies, "round_number": 0, "round_count": round_count, "mode": mode, "score": 0})
             return redirect(url_for("next_round"))
         except Exception as error:
             app.logger.exception("Could not load Letterboxd profile")
@@ -62,7 +85,7 @@ def home():
 def next_round():
     if not session.get("username"):
         return redirect(url_for("home"))
-    if session.get("round_number", 0) >= ROUND_COUNT:
+    if session.get("round_number", 0) >= session.get("round_count", ROUND_COUNT):
         return redirect(url_for("results"))
     try:
         movie = scraper.loadRandomMovie(session["username"])
@@ -79,7 +102,19 @@ def next_round():
 def game():
     if not session.get("round", {}).get("movie"):
         return redirect(url_for("next_round"))
-    return render_template("game.html", round=session["round"], score=session.get("score", 0), round_number=session.get("round_number", 0), round_count=ROUND_COUNT, hint_costs=HINT_COSTS)
+    game_round = session["round"]
+    hint_total = sum(HINT_COSTS[name] for name in game_round.get("hints", []) if name in HINT_COSTS)
+    return render_template(
+        "game.html",
+        round=game_round,
+        score=session.get("score", 0),
+        round_number=session.get("round_number", 0),
+        round_count=session.get("round_count", ROUND_COUNT),
+        mode=session.get("mode", "easy"),
+        hint_costs=HINT_COSTS,
+        movie_names=[name for name in session.get("movie_names", []) if isinstance(name, str)],
+        round_points=max(0, 100 - hint_total),
+    )
 
 
 @app.post("/guess")
@@ -89,7 +124,7 @@ def guess():
         return redirect(url_for("game"))
     selected = request.form.get("answer", "")
     movie = game_round["movie"]
-    correct = title_without_year(selected) == title_without_year(f"{movie['title']} ({movie['year']})")
+    correct = titles_match(selected, movie["title"])
     game_round.update({"answered": True, "correct": correct})
     session["round"] = game_round
     if correct:

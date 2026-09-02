@@ -1,4 +1,5 @@
 import random
+from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 from curl_cffi import requests
@@ -34,7 +35,7 @@ class LetterboxdScraper(Scraper):
         self.save(soup)
         title = soup.find("h1", class_="headline-1").text.strip()
         year = soup.find("span", class_="releasedate").text.strip()
-        image = soup.find("div", class_="film-poster").find("img").get("src")
+        imageUrl = soup.find("meta", {"property": "og:image"}).get("content")
         rating = soup.find("meta", {"name": "twitter:data2"}).get("content").removesuffix(" out of 5")
 
         castSoup = soup.find("div", class_="cast-list").find_all("a", class_="text-slug tooltip")
@@ -49,7 +50,7 @@ class LetterboxdScraper(Scraper):
         return {
             "title": title,
             "year": year,
-            "image": image,
+            "image": imageUrl,
             "rating": rating,
             "cast": cast,
             "directors": directors,
@@ -91,8 +92,10 @@ class LetterboxdScraper(Scraper):
             url = f"https://letterboxd.com/{username}/films/page/{userPage}/"
             soup = self.getHtml(url)
             movieGrid = soup.find("div", class_="poster-grid")
+            self.save(movieGrid)
             movies = movieGrid.find_all("li", class_="griditem")
             for movieSoup in movies:
-                movieName = movieSoup.find("img").get("img-alt")
+                movieName = movieSoup.find("img").get("alt")
                 allMovies.append(movieName)
+                print(allMovies)
         return allMovies

@@ -12,14 +12,40 @@
     <div class="round-meta"><span>ROUND {{ '%02d'|format(round_number) }} / {{ '%02d'|format(round_count) }}</span><span>{{ session.get('username') }}</span></div>
     <section class="question"><p class="eyebrow">{{ mode|upper }} MODE</p><h1>Which movie is this?</h1><p class="prompt">Build the clues carefully. Every hint comes out of your score.</p></section>
     {% if 'image' in round.hints and round.movie.image %}<img class="movie-hint" src="{{ round.movie.image }}" alt="Blurred movie poster">{% endif %}
-    <section class="clue-board"><div class="clue primary"><span class="clue-label">THE CLUES</span><p>Someone in this film has a story worth remembering.</p></div>
+    <section class="clue-board">
         {% for hint in round.hints %}<div class="clue revealed"><span class="clue-label">{{ hint|upper }}</span><p>{% if hint == 'image' %}A very blurred poster is revealed above.{% elif hint == 'cast' %}{{ round.movie.cast[:3]|join(', ') }}{% elif hint == 'rating' %}Letterboxd rates it {{ round.movie.rating }} / 5{% elif hint == 'userRating' %}{% if round.movie.userRating is not none %}{{ round.movie.userRating }} / 5{% else %}This user did not rate it{% endif %}{% elif hint == 'director' %}Directed by {{ round.movie.directors|join(', ') }}{% elif hint == 'year' %}Released in {{ round.movie.year }}{% endif %}</p></div>{% endfor %}
     </section>
     {% if not round.answered %}
     <div class="hints"><span>BUY A CLUE</span>{% for name, cost in hint_costs.items() %}{% if name not in round.hints %}<form method="post" action="{{ url_for('hint', hint_name=name) }}"><button class="hint-button" type="submit">{{ name|replace('userRating', 'your rating')|capitalize }} <b>-{{ cost }}</b></button></form>{% endif %}{% endfor %}</div>
-    {% if mode == 'easy' %}<form method="post" action="{{ url_for('guess') }}" class="answers"><p class="eyebrow">MAKE YOUR PICK</p>{% for choice in round.choices %}<button class="answer" name="answer" value="{{ choice }}" type="submit"><span>{{ '%02d'|format(loop.index) }}</span>{{ choice }}</button>{% endfor %}</form>{% else %}<form method="post" action="{{ url_for('guess') }}" class="type-answer"><label for="answer" class="eyebrow">TYPE THE FILM TITLE</label><input id="answer" name="answer" list="movie-suggestions" autocomplete="off" required><datalist id="movie-suggestions">{% for choice in round.choices %}<option value="{{ choice }}">{% endfor %}</datalist><button type="submit">Submit guess -></button></form>{% endif %}
+    {% if mode == 'easy' %}<form method="post" action="{{ url_for('guess') }}" class="answers"><p class="eyebrow">MAKE YOUR PICK</p>{% for choice in round.choices %}<button class="answer" name="answer" value="{{ choice }}" type="submit"><span>{{ '%02d'|format(loop.index) }}</span>{{ choice }}</button>{% endfor %}</form>{% else %}<form method="post" action="{{ url_for('guess') }}" class="type-answer"><label for="answer" class="eyebrow">TYPE THE FILM TITLE</label><div class="movie-picker"><input id="answer" name="answer" autocomplete="off" required><div id="movie-suggestions" class="suggestions" role="listbox">{% for movie_name in movie_names %}<button type="button" class="suggestion" data-value="{{ movie_name }}">{{ movie_name }}</button>{% endfor %}</div></div><button type="submit">Submit guess -></button></form>{% endif %}
     <form method="post" action="{{ url_for('skip') }}" class="skip-form"><button type="submit" class="skip-button">Skip this movie</button></form>
-    {% else %}<section class="result {{ 'correct' if round.correct else 'wrong' }}"><p class="eyebrow">{{ 'CORRECT' if round.correct else ('SKIPPED' if round.skipped else 'NOT QUITE') }}</p><h2>{{ round.movie.title }}</h2><p>{{ 'You earned 100 points.' if round.correct else 'The answer was ' ~ round.movie.title ~ '.' }}</p><a class="button" href="{{ url_for('next_round') }}">{{ 'Next round' if round_number < round_count else 'See results' }} -></a></section>{% endif %}
+    {% else %}<section class="result {{ 'correct' if round.correct else 'wrong' }}"><p class="eyebrow">{{ 'CORRECT' if round.correct else ('SKIPPED' if round.skipped else 'NOT QUITE') }}</p><h2>{{ round.movie.title }}</h2><p>{{ 'You earned ' ~ round_points ~ ' points after hint costs.' if round.correct else 'The answer was ' ~ round.movie.title ~ '.' }}</p><a class="button" href="{{ url_for('next_round') }}">{{ 'Next round' if round_number < round_count else 'See results' }} -></a></section>{% endif %}
 </main>
+<script>
+    const movieInput = document.getElementById('answer');
+    const suggestions = document.getElementById('movie-suggestions');
+    if (movieInput && suggestions) {
+        const items = [...suggestions.querySelectorAll('.suggestion')];
+        const updateSuggestions = () => {
+            const query = movieInput.value.trim().toLowerCase();
+            let visible = 0;
+            items.forEach((item) => {
+                const matches = !query || item.textContent.toLowerCase().includes(query);
+                item.hidden = !matches || visible >= 12;
+                if (matches && visible < 12) visible += 1;
+            });
+            suggestions.hidden = visible === 0;
+        };
+        items.forEach((item) => item.addEventListener('click', () => {
+            movieInput.value = item.dataset.value;
+            suggestions.hidden = true;
+        }));
+        movieInput.addEventListener('input', updateSuggestions);
+        movieInput.addEventListener('focus', updateSuggestions);
+        document.addEventListener('click', (event) => {
+            if (!event.target.closest('.movie-picker')) suggestions.hidden = true;
+        });
+    }
+</script>
 </body>
 </html>
