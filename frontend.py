@@ -209,7 +209,7 @@ def makeChoices(movie, movieNames):
 
 
 @app.route("/", methods=["GET", "POST"])
-@limiter.limit("10 per minute")
+@limiter.limit("30 per minute")
 def home():
     if request.method == "POST":
         data_source = request.form.get("data_source", "default")
@@ -256,7 +256,7 @@ def home():
 
 
 @app.route("/round", endpoint="next_round")
-@limiter.limit("30 per minute")
+@limiter.limit("120 per minute")
 def next_round():
     if not session.get("username"):
         return redirect(url_for("home"))
@@ -283,6 +283,7 @@ def next_round():
         return redirect(url_for("home"))
 
 
+@limiter.limit("120 per minute")
 @app.route("/game")
 def game():
     if not session.get("round", {}).get("movie"):
@@ -311,7 +312,7 @@ def game():
 
 
 @app.post("/guess")
-@limiter.limit("60 per minute")
+@limiter.limit("120 per minute")
 def guess():
     game_round = session.get("round", {})
     if not game_round or game_round.get("answered"):
@@ -327,7 +328,7 @@ def guess():
 
 
 @app.post("/skip")
-@limiter.limit("30 per minute")
+@limiter.limit("60 per minute")
 def skip():
     game_round = session.get("round", {})
     if game_round and not game_round.get("answered"):
@@ -337,7 +338,7 @@ def skip():
 
 
 @app.post("/hint/<hint_name>")
-@limiter.limit("60 per minute")
+@limiter.limit("120 per minute")
 def hint(hint_name):
     game_round = session.get("round", {})
     if (
