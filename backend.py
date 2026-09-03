@@ -1,9 +1,7 @@
 import json
 import random
 import csv
-import re
 import sqlite3
-from pathlib import Path
 
 from bs4 import BeautifulSoup
 from curl_cffi import requests
@@ -115,14 +113,36 @@ class LetterboxdScraper(Scraper):
             "genres": genres,
             "userRating": None,
         }
+    
+    def getMoviesFromLetterboxdList(self, url):
+        soup = self.getHtml(url)
+        movieGrid = soup.find("ul", class_="poster-list")
+        movies = movieGrid.find_all("li", class_="posteritem")
+        if not movies:
+            raise ValueError("No movies were found on this Letterboxd list.")
+        movieDetailsList = []
+        for movieSoup in movies:
+            component = movieSoup.find("div", class_="react-component")
+            movieUrl = component.get("data-item-link") if component else None
+            if not movieUrl:
+                continue
+            fullMovieUrl = f"https://letterboxd.com{movieUrl}"
+            try:
+                movieDetails = self._loadMovieDetails(fullMovieUrl)
+                movieDetailsList.append(movieDetails)
+            except Exception as e:
+                print(f"Failed to load details for {fullMovieUrl}: {e}")
+        return movieDetailsList
 
-    def _getPageCountForUser(self, username):
-        url = f"https://letterboxd.com/{username}/films/"
+    def _getPageCountForUrl(self, url):
         soup = self.getHtml(url)
         pages = soup.find_all("li", class_="paginate-page")
         if len(pages) == 0:
             return 1
         return int(pages[-1].text.strip())
+    def _getPageCountForUser(self, username):
+        url = f"https://letterboxd.com/{username}/films/"
+        return self._getPageCountForUrl(url)
 
     def loadRandomMovie(self, username):
         pageCount = self._getPageCountForUser(username)
@@ -236,6 +256,7 @@ def buildMovieDatabaseFromLetterboxdDump(fileName="db/db.jsonl",
                                          condense=True                        #< save space by condensing the data, removing unnecessary fields and formatting
                                          ):
     movies = {}
+    scraper = LetterboxdScraper()
     with open(fileName, "r", encoding="utf-8") as file:
         for lineNumber, line in enumerate(file, start=1):
             if not line.strip():
@@ -264,14 +285,25 @@ def buildMovieDatabaseFromLetterboxdDump(fileName="db/db.jsonl",
                 description = movie.get("synopsis")
                 if condense and description:
                     description = description[:100]  #< Limit to first 200 characters
-
+                
+                imageUrl = movie.get("poster_url")
+                tagline = None
+                if requests.get(imageUrl).status_code != 200: #< try to load image
+                    try:
+                        movie = scraper._loadMovieDetails(movie.get("url"))
+                        imageUrl = movie.get("image")
+                        tagline = movie.get("tagline")
+                        print(f"Image not found for {title} ({movie.get('year')}), reloaded from Letterboxd: {imageUrl}")
+                    except Exception as e:
+                        print(f"Image not found for {title} ({movie.get('year')}), and failed to reload from Letterboxd: {e}")
+                
                 movie = {
                     "url": movie.get("url"),
                     "title": title,
                     "year": movie.get("year"),
-                    "tagline": None,
+                    "tagline": tagline,
                     "description": description,
-                    "image": movie.get("poster_url"),
+                    "image": imageUrl,
                     "rating": rating,
                     "cast": cast,
                     "directors": movie.get("directors"),
@@ -280,12 +312,58 @@ def buildMovieDatabaseFromLetterboxdDump(fileName="db/db.jsonl",
                 }
 
                 movies[title+str(movie.get("year", 0))] = movie
-    
+
     with open(outputFileName, "w", encoding="utf-8") as outfile:
         indent = 4
         if condense:
             indent = None
         json.dump(movies, outfile, ensure_ascii=False, indent=indent)
+
+def addToDatabaseFromLetterboxdList(url, databaseFileName="db/database.json", condense=True):
+    # https://letterboxd.com/owencharlish/list/2026/
+    scraper = LetterboxdScraper()
+    movies = scraper.getMoviesFromLetterboxdList(url)
+    with open(databaseFileName, "r", encoding="utf-8") as file:
+        existingMovies = json.load(file)
+    existingMovies.update({movie["title"] + str(movie.get("year", 0)): movie for movie in movies})
+    indent = 4
+    if condense:
+        indent = None
+    with open(databaseFileName, "w", encoding="utf-8") as file:
+        json.dump(existingMovies, file, ensure_ascii=False, indent=indent)
+
+def sortDatabaseJsonByRatingCount(databaseFileName="db/database.json", condense=True):
+    with open(databaseFileName, "r", encoding="utf-8") as file:
+        movies = json.load(file)
+    sortedMovies = dict(sorted(movies.items(), key=lambda item: item[1].get("ratingCount", 0), reverse=True))
+    indent = 4
+    if condense:
+        indent = None
+    with open(databaseFileName, "w", encoding="utf-8") as file:
+        json.dump(sortedMovies, file, ensure_ascii=False, indent=indent)
+
+def rebuildImageUrlsInDatabaseJson(databaseFileName="db/database.json"):
+    scraper = LetterboxdScraper()
+    with open(databaseFileName, "r", encoding="utf-8") as file:
+        movies = json.load(file)
+    for i, movie in enumerate(movies.values()):
+        imageUrl = movie.get("image")
+        if imageUrl and requests.get(imageUrl).status_code != 200: #< try to load image
+            try:
+                updatedMovie = scraper._loadMovieDetails(movie.get("url"))
+                movie["image"] = updatedMovie.get("image")
+                movie["tagline"] = updatedMovie.get("tagline")
+                print(f"Updated image URL for {movie['title']} ({movie.get('year', 0)}): {movie['image']}")
+            except Exception as e:
+                print(f"Failed to update image URL for {movie['title']} ({movie.get('year', 0)}): {e}")
+        # else:
+        #     print(f"Image URL for {movie['title']} ({movie.get('year', 0)}) is valid: {imageUrl}")
+        if (i + 1) % 100 == 0:
+            print(f"Processed {i + 1} movies... / {len(movies)}... Saving progress to {databaseFileName}...")
+            with open(databaseFileName, "w", encoding="utf-8") as file:
+                json.dump(movies, file, ensure_ascii=False, indent=4)
+    with open(databaseFileName, "w", encoding="utf-8") as file:
+        json.dump(movies, file, ensure_ascii=False, indent=4)
 
 def buildSqliteDatabaseFromJson(jsonFileName="db/database.json", outputFileName="db/database.sqlite"):
     import ijson
@@ -302,5 +380,8 @@ def buildSqliteDatabaseFromJson(jsonFileName="db/database.json", outputFileName=
         connection.commit()
 
 if __name__ == "__main__":
-    buildMovieDatabaseFromLetterboxdDump(condense=True)
+    # buildMovieDatabaseFromLetterboxdDump(condense=True)
+    # addToDatabaseFromLetterboxdList("https://letterboxd.com/owencharlish/list/2026/", databaseFileName="db/database.json", condense=True)
+    # sortDatabaseJsonByRatingCount()
+    # rebuildImageUrlsInDatabaseJson()
     buildSqliteDatabaseFromJson()
