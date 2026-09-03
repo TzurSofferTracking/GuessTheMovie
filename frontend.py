@@ -4,6 +4,7 @@ import random
 import secrets
 import hmac
 import sqlite3
+from contextlib import contextmanager
 from difflib import SequenceMatcher
 import unicodedata
 from flask import (
@@ -38,28 +39,38 @@ limiter = RequestRateLimiter()
 GLOBAL_STATS_DATABASE = os.path.join(app.instance_path, "daily_stats.sqlite")
 
 
+@contextmanager
+def connectGlobalStats():
+    connection = sqlite3.connect(GLOBAL_STATS_DATABASE, timeout=30)
+    connection.execute("PRAGMA busy_timeout = 30000")
+    try:
+        yield connection
+    finally:
+        connection.close()
+
+
 def initializeGlobalStats():
-    with sqlite3.connect(GLOBAL_STATS_DATABASE) as connection:
+    with connectGlobalStats() as connection:
+        connection.execute("PRAGMA journal_mode = WAL")
         connection.execute(
             "CREATE TABLE IF NOT EXISTS global_rounds "
             "(id INTEGER PRIMARY KEY CHECK (id = 1), rounds_played INTEGER NOT NULL DEFAULT 0)"
         )
-        if not connection.execute("SELECT 1 FROM global_rounds WHERE id = 1").fetchone():
-            try:
-                previous_count = connection.execute(
-                    "SELECT COALESCE(SUM(rounds_played), 0) FROM daily_rounds"
-                ).fetchone()[0]
-            except sqlite3.OperationalError:
-                previous_count = 0
-            connection.execute(
-                "INSERT INTO global_rounds (id, rounds_played) VALUES (1, ?)",
-                (previous_count,),
-            )
+        try:
+            previous_count = connection.execute(
+                "SELECT COALESCE(SUM(rounds_played), 0) FROM daily_rounds"
+            ).fetchone()[0]
+        except sqlite3.OperationalError:
+            previous_count = 0
+        connection.execute(
+            "INSERT OR IGNORE INTO global_rounds (id, rounds_played) VALUES (1, ?)",
+            (previous_count,),
+        )
         connection.commit()
 
 
 def getGlobalRounds():
-    with sqlite3.connect(GLOBAL_STATS_DATABASE) as connection:
+    with connectGlobalStats() as connection:
         row = connection.execute(
             "SELECT rounds_played FROM global_rounds WHERE id = 1"
         ).fetchone()
@@ -67,7 +78,7 @@ def getGlobalRounds():
 
 
 def incrementGlobalRounds():
-    with sqlite3.connect(GLOBAL_STATS_DATABASE) as connection:
+    with connectGlobalStats() as connection:
         connection.execute(
             "INSERT INTO global_rounds (id, rounds_played) VALUES (1, 1) "
             "ON CONFLICT(id) DO UPDATE SET rounds_played = rounds_played + 1"
