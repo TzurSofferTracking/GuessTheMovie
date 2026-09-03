@@ -199,9 +199,8 @@ class LetterboxdDownloadedData(Template):
             if year:
                 key = title + year
                 movie = self.database.get(key)
-                movie["userRating"] = row.get("Rating") or None
-
                 if movie:
+                    movie["userRating"] = row.get("Rating") or None
                     movies[key] = movie
         return movies
 
@@ -213,8 +212,7 @@ class LetterboxdDownloadedData(Template):
 
         key = random.choice(list(movies.keys()))
         movie = movies[key].copy()
-        movie["userRating"] = None  # Reset user rating for the random movie
-        return 
+        return movie
 
     def getAllUserMovieNames(self, exportedJournal):
         movies = self._loadExportedMovies(exportedJournal)

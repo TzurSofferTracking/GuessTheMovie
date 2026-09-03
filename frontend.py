@@ -29,7 +29,7 @@ app.config.update(
     SESSION_COOKIE_SECURE=os.environ.get("FLASK_COOKIE_SECURE", "0") == "1",
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    MAX_CONTENT_LENGTH=16 * 1024,
+    MAX_CONTENT_LENGTH=10 * 1024 * 1024,
 )
 os.makedirs(app.config["SESSION_FILE_DIR"], exist_ok=True)
 Session(app)
@@ -64,6 +64,7 @@ def addSecurityHeaders(response):
 
 
 scraper = LetterboxdDownloadedData()
+DEFAULT_DATA_FILE = os.path.join(os.path.dirname(__file__), "db", "defaultData.csv")
 ROUND_COUNT = 5
 HINT_COSTS = {
     "image": 25,
@@ -140,7 +141,8 @@ def makeChoices(movie, movieNames):
 @limiter.limit("10 per minute")
 def home():
     if request.method == "POST":
-        username = request.form.get("username", "").strip().strip("/")
+        data_source = request.form.get("data_source", "default")
+        data_file = request.files.get("custom_data")
         mode = request.form.get("mode", "easy")
         try:
             round_count = int(request.form.get("round_count", ROUND_COUNT))
@@ -149,18 +151,24 @@ def home():
         if mode not in ("easy", "hard") or not 1 <= round_count <= 50:
             flash("Choose valid game settings.", "error")
             return render_template("home.html")
-        if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", username):
-            flash("Enter a valid Letterboxd username.", "error")
+        if data_source not in ("default", "custom"):
+            flash("Choose a valid data source.", "error")
+            return render_template("home.html")
+        if data_source == "custom" and (not data_file or not data_file.filename.lower().endswith(".csv")):
+            flash("Upload a CSV file exported from Letterboxd.", "error")
             return render_template("home.html")
         try:
-            movies = scraper.getAllUserMovieNames(username)
+            selected_source = data_file if data_source == "custom" else DEFAULT_DATA_FILE
+            loaded_movies = scraper._loadExportedMovies(selected_source)
+            movies = list(loaded_movies.values())
             if len(movies) < 4:
-                raise ValueError("This profile does not have enough films for a game.")
+                raise ValueError("The selected data does not contain at least four matching movies.")
             session.clear()
             session.update(
                 {
-                    "username": username,
-                    "movieNames": movies,
+                    "username": "Custom Letterboxd data" if data_source == "custom" else "Default movie list",
+                    "movieData": movies,
+                    "movieNames": [movie["title"] for movie in movies],
                     "roundNumber": 0,
                     "roundCount": round_count,
                     "mode": mode,
@@ -169,8 +177,8 @@ def home():
             )
             return redirect(url_for("next_round"))
         except Exception as error:
-            app.logger.exception("Could not load Letterboxd profile")
-            flash(f"Could not load that profile: {error}", "error")
+            app.logger.exception("Could not load movie data")
+            flash(f"Could not load that movie data: {error}", "error")
     return render_template("home.html")
 
 
@@ -182,7 +190,7 @@ def next_round():
     if session.get("roundNumber", 0) >= session.get("roundCount", ROUND_COUNT):
         return redirect(url_for("results"))
     try:
-        movie = scraper.loadRandomMovie(session["username"])
+        movie = random.choice(session["movieData"]).copy()
         session["roundNumber"] = session.get("roundNumber", 0) + 1
         session["round"] = {
             "movie": movie,

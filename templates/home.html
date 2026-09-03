@@ -10,16 +10,22 @@
 <main class="shell intro">
     <p class="eyebrow">LETTERBOXD MEMORY GAME</p>
     <h1>How well do you know <em>their</em> movies?</h1>
-    <p class="lede">Choose your challenge, buy clues, and score 100 points for every correct film.</p>
+    <p class="lede">Use the included movie list or upload your own Letterboxd data, then choose your challenge.</p>
     {% with messages = get_flashed_messages(with_categories=true) %}
         {% for category, message in messages %}<p class="alert {{ category }}">{{ message }}</p>{% endfor %}
     {% endwith %}
-    <form method="post" class="settings-form" id="start-form">
+    <form method="post" class="settings-form" id="start-form" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <input type="hidden" name="source" value="user">
-        <div class="input-row username-row">
-            <span>letterboxd.com/</span>
-            <input id="username" name="username" placeholder="username" required>
+        <div class="data-source">
+            <label><input type="radio" name="data_source" value="default" checked> Use default movie list</label>
+            <label><input type="radio" name="data_source" value="custom"> Upload my Letterboxd data</label>
+        </div>
+        <div class="upload-help">
+            Export your data from Letterboxd: Settings -> Import &amp; Export -> Export Your Data.
+            Upload the exported <strong>diary.csv</strong> file here.
+        </div>
+        <div class="input-row upload-row">
+            <input id="custom_data" name="custom_data" type="file" accept=".csv,text/csv">
         </div>
         <div class="settings-grid">
             <label for="round_count">Rounds
@@ -42,6 +48,15 @@
         button.disabled = true;
         button.classList.add('loading');
     });
+    const sourceInputs = document.querySelectorAll('input[name="data_source"]');
+    const uploadInput = document.getElementById('custom_data');
+    const updateUpload = () => {
+        const custom = document.querySelector('input[name="data_source"]:checked').value === 'custom';
+        uploadInput.disabled = !custom;
+        uploadInput.required = custom;
+    };
+    sourceInputs.forEach((input) => input.addEventListener('change', updateUpload));
+    updateUpload();
 </script>
 </body>
 </html>
