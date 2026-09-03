@@ -82,6 +82,9 @@ scraper = LetterboxdDownloadedData(
 DEFAULT_DATA_FILE = os.path.join(os.path.dirname(__file__), "db", "defaultData.csv")
 ROUND_COUNT = 5
 HINT_COSTS = {
+    "firstLetter": 20,
+    "lastLetter": 20,
+    "maskedName": 45,
     "cast": 20,
     "rating": 5,
     "userRating": 5,
@@ -95,6 +98,8 @@ HINT_COSTS = {
 
 
 def hasHintValue(movie, hintName):
+    if hintName in ("firstLetter", "lastLetter", "maskedName"):
+        return bool(movie.get("title"))
     if hintName == "review":
         reviews = movie.get("reviews") or []
         return bool(reviews and reviews[0].get("review_text"))
@@ -118,7 +123,18 @@ def redactNames(value, movie):
     return value
 
 
+def titleLetter(title, fromEnd=False):
+    letters = [character for character in title if character.isalnum()]
+    return (letters[-1] if fromEnd else letters[0]) if letters else ""
+
+
+def maskTitle(title):
+    return "".join("*" if not character.isspace() else character for character in title)
+
+
 app.jinja_env.filters["redact_names"] = redactNames
+app.jinja_env.filters["title_letter"] = titleLetter
+app.jinja_env.filters["mask_title"] = maskTitle
 
 
 def titleWithoutYear(title):
