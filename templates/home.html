@@ -10,7 +10,7 @@
 <header class="topbar"><a href="{{ url_for('home') }}" class="brand">GUESS<span>THE</span>MOVIE</a><div class="topbar-stats"><div class="daily-rounds"><small>ROUNDS TODAY</small><strong>{{ rounds_played_today }}</strong></div></div></header>
 <main class="shell intro">
     <p class="eyebrow">LETTERBOXD MEMORY GAME</p>
-    <h1>How well do you know <em>their</em> movies?</h1>
+    <h1>How well do you know <em>your</em> movies?</h1>
     <p class="lede">Use the included movie list or upload your own Letterboxd data, then choose your challenge.</p>
     {% with messages = get_flashed_messages(with_categories=true) %}
         {% for category, message in messages %}<p class="alert {{ category }}">{{ message }}</p>{% endfor %}
