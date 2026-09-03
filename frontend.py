@@ -3,6 +3,7 @@ import re
 import random
 import secrets
 import hmac
+from datetime import date
 from difflib import SequenceMatcher
 import unicodedata
 from flask import (
@@ -49,6 +50,15 @@ def protectPostRequests():
 def injectCsrfToken():
     token = session.setdefault("csrf_token", secrets.token_urlsafe(32))
     return {"csrf_token": token}
+
+
+@app.context_processor
+def injectDailyRounds():
+    today = date.today().isoformat()
+    if session.get("roundsDate") != today:
+        session["roundsDate"] = today
+        session["roundsPlayedToday"] = 0
+    return {"rounds_played_today": session.get("roundsPlayedToday", 0)}
 
 
 @app.after_request
@@ -171,6 +181,9 @@ def home():
             movies = list(loaded_movies.values())
             if len(movies) < 4:
                 raise ValueError("The selected data does not contain at least four matching movies.")
+            roundsPlayedToday = session.get("roundsPlayedToday", 0)
+            roundsDate = session.get("roundsDate")
+            csrfToken = session.get("csrf_token")
             session.clear()
             session.update(
                 {
@@ -181,6 +194,9 @@ def home():
                     "roundCount": round_count,
                     "mode": mode,
                     "score": 0,
+                    "roundsDate": roundsDate,
+                    "roundsPlayedToday": roundsPlayedToday,
+                    "csrf_token": csrfToken or secrets.token_urlsafe(32),
                 }
             )
             return redirect(url_for("next_round"))
@@ -200,6 +216,7 @@ def next_round():
     try:
         movie = random.choice(session["movieData"]).copy()
         session["roundNumber"] = session.get("roundNumber", 0) + 1
+        session["roundsPlayedToday"] = session.get("roundsPlayedToday", 0) + 1
         session["round"] = {
             "movie": movie,
             "choices": makeChoices(movie, session["movieNames"]),

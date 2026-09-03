@@ -969,3 +969,36 @@ body {
     height: 1px;
     opacity: 0
 }
+
+.daily-rounds {
+    color: var(--muted);
+    font: 500 12px 'DM Mono', monospace;
+    letter-spacing: .04em
+}
+
+.daily-rounds strong {
+    color: var(--coral)
+}
+
+.topbar-stats {
+    display: flex;
+    align-items: center;
+    gap: 28px
+}
+
+.topbar .daily-rounds {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0
+}
+
+.topbar .daily-rounds small {
+    color: var(--muted);
+    font: 500 11px 'DM Mono', monospace;
+    letter-spacing: .08em
+}
+
+.topbar .daily-rounds strong {
+    font-size: 20px
+}
