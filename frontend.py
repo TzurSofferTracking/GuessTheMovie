@@ -67,19 +67,22 @@ scraper = LetterboxdDownloadedData()
 DEFAULT_DATA_FILE = os.path.join(os.path.dirname(__file__), "db", "defaultData.csv")
 ROUND_COUNT = 5
 HINT_COSTS = {
-    "image": 25,
     "cast": 20,
-    "rating": 15,
-    "userRating": 15,
+    "rating": 5,
+    "userRating": 5,
     "director": 10,
     "genres": 10,
     "tagline": 10,
     "description": 20,
+    "review": 25,
     "year": 10,
 }
 
 
 def hasHintValue(movie, hintName):
+    if hintName == "review":
+        reviews = movie.get("reviews") or []
+        return bool(reviews and reviews[0].get("review_text"))
     value = movie.get(hintName)
     return bool(value)
 
