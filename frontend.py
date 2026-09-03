@@ -3,7 +3,7 @@ import re
 import random
 import secrets
 import hmac
-from datetime import date
+import sqlite3
 from difflib import SequenceMatcher
 import unicodedata
 from flask import (
@@ -35,6 +35,47 @@ app.config.update(
 os.makedirs(app.config["SESSION_FILE_DIR"], exist_ok=True)
 Session(app)
 limiter = RequestRateLimiter()
+GLOBAL_STATS_DATABASE = os.path.join(app.instance_path, "daily_stats.sqlite")
+
+
+def initializeGlobalStats():
+    with sqlite3.connect(GLOBAL_STATS_DATABASE) as connection:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS global_rounds "
+            "(id INTEGER PRIMARY KEY CHECK (id = 1), rounds_played INTEGER NOT NULL DEFAULT 0)"
+        )
+        if not connection.execute("SELECT 1 FROM global_rounds WHERE id = 1").fetchone():
+            try:
+                previous_count = connection.execute(
+                    "SELECT COALESCE(SUM(rounds_played), 0) FROM daily_rounds"
+                ).fetchone()[0]
+            except sqlite3.OperationalError:
+                previous_count = 0
+            connection.execute(
+                "INSERT INTO global_rounds (id, rounds_played) VALUES (1, ?)",
+                (previous_count,),
+            )
+        connection.commit()
+
+
+def getGlobalRounds():
+    with sqlite3.connect(GLOBAL_STATS_DATABASE) as connection:
+        row = connection.execute(
+            "SELECT rounds_played FROM global_rounds WHERE id = 1"
+        ).fetchone()
+    return row[0] if row else 0
+
+
+def incrementGlobalRounds():
+    with sqlite3.connect(GLOBAL_STATS_DATABASE) as connection:
+        connection.execute(
+            "INSERT INTO global_rounds (id, rounds_played) VALUES (1, 1) "
+            "ON CONFLICT(id) DO UPDATE SET rounds_played = rounds_played + 1"
+        )
+        connection.commit()
+
+
+initializeGlobalStats()
 
 
 @app.before_request
@@ -53,12 +94,8 @@ def injectCsrfToken():
 
 
 @app.context_processor
-def injectDailyRounds():
-    today = date.today().isoformat()
-    if session.get("roundsDate") != today:
-        session["roundsDate"] = today
-        session["roundsPlayedToday"] = 0
-    return {"rounds_played_today": session.get("roundsPlayedToday", 0)}
+def injectGlobalRounds():
+    return {"rounds_played_today": getGlobalRounds()}
 
 
 @app.after_request
@@ -197,8 +234,6 @@ def home():
             movies = list(loaded_movies.values())
             if len(movies) < 4:
                 raise ValueError("The selected data does not contain at least four matching movies.")
-            roundsPlayedToday = session.get("roundsPlayedToday", 0)
-            roundsDate = session.get("roundsDate")
             csrfToken = session.get("csrf_token")
             session.clear()
             session.update(
@@ -210,8 +245,6 @@ def home():
                     "roundCount": round_count,
                     "mode": mode,
                     "score": 0,
-                    "roundsDate": roundsDate,
-                    "roundsPlayedToday": roundsPlayedToday,
                     "csrf_token": csrfToken or secrets.token_urlsafe(32),
                 }
             )
@@ -227,12 +260,16 @@ def home():
 def next_round():
     if not session.get("username"):
         return redirect(url_for("home"))
+    if not session.get("movieData") or not session.get("movieNames"):
+        session.clear()
+        flash("Your game session expired. Start a new game.", "error")
+        return redirect(url_for("home"))
     if session.get("roundNumber", 0) >= session.get("roundCount", ROUND_COUNT):
         return redirect(url_for("results"))
     try:
         movie = random.choice(session["movieData"]).copy()
         session["roundNumber"] = session.get("roundNumber", 0) + 1
-        session["roundsPlayedToday"] = session.get("roundsPlayedToday", 0) + 1
+        incrementGlobalRounds()
         session["round"] = {
             "movie": movie,
             "choices": makeChoices(movie, session["movieNames"]),
