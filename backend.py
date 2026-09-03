@@ -302,5 +302,5 @@ def buildSqliteDatabaseFromJson(jsonFileName="db/database.json", outputFileName=
         connection.commit()
 
 if __name__ == "__main__":
-    # buildMovieDatabaseFromLetterboxdDump(condense=True)
+    buildMovieDatabaseFromLetterboxdDump(condense=True)
     buildSqliteDatabaseFromJson()
