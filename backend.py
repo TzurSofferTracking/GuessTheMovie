@@ -222,7 +222,10 @@ class LetterboxdDownloadedData(Template):
             for movie in movies.values()
         ]
 
-def buildMovieDatabaseFromLetterboxdDump(fileName="db/db.jsonl", outputFileName="db/database.json"):
+def buildMovieDatabaseFromLetterboxdDump(fileName="db/db.jsonl",
+                                         outputFileName="db/database.json",
+                                         condense=True                        #< save space by condensing the data, removing unnecessary fields and formatting
+                                         ):
     movies = {}
     with open(fileName, "r", encoding="utf-8") as file:
         for lineNumber, line in enumerate(file, start=1):
@@ -240,24 +243,40 @@ def buildMovieDatabaseFromLetterboxdDump(fileName="db/db.jsonl", outputFileName=
                 rating = movie.get("rating")
                 if type(rating) == str:
                     rating = rating.removesuffix(" out of 5")
+                cast = movie.get("cast") or []
+                if condense:
+                    cast = cast[:3]
+                
+                reviews = movie.get("reviews")
+                if condense and reviews:
+                    reviews = reviews[:1]
+                    reviews[0]["review_text"] = reviews[0]["review_text"][:100]    #< Limit to first 200 characters of the first review
+
+                description = movie.get("synopsis")
+                if condense and description:
+                    description = description[:100]  #< Limit to first 200 characters
+
                 movie = {
                     "url": movie.get("url"),
                     "title": title,
                     "year": movie.get("year"),
                     "tagline": None,
-                    "description": movie.get("synopsis"),
+                    "description": description,
                     "image": movie.get("poster_url"),
                     "rating": rating,
-                    "cast": movie.get("cast") or [],
-                    "directors": movie.get("directors") or [],
-                    "genres": movie.get("genres") or [],
-                    "reviews": movie.get("reviews") or []
+                    "cast": cast,
+                    "directors": movie.get("directors"),
+                    "genres": movie.get("genres"),
+                    "reviews": reviews 
                 }
 
                 movies[title+str(movie.get("year", 0))] = movie
     
     with open(outputFileName, "w", encoding="utf-8") as outfile:
-        json.dump(movies, outfile, ensure_ascii=False, indent=4)
+        indent = 4
+        if condense:
+            indent = None
+        json.dump(movies, outfile, ensure_ascii=False, indent=indent)
 
-# if __name__ == "__main__":
-#     buildMovieDatabaseFromLetterboxdDump()
+if __name__ == "__main__":
+    buildMovieDatabaseFromLetterboxdDump(condense=True)

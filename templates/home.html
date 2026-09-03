@@ -16,17 +16,9 @@
     {% endwith %}
     <form method="post" class="settings-form" id="start-form" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <div class="data-source">
-            <label><input type="radio" name="data_source" value="default" checked> Use default movie list</label>
-            <label><input type="radio" name="data_source" value="custom"> Upload my Letterboxd data</label>
-        </div>
-        <div class="upload-help">
-            Export your data from Letterboxd: Settings -> Import &amp; Export -> Export Your Data.
-            Upload the exported <strong>diary.csv</strong> file here.
-        </div>
-        <div class="input-row upload-row">
-            <input id="custom_data" name="custom_data" type="file" accept=".csv,text/csv">
-        </div>
+        <input type="hidden" name="data_source" id="data-source" value="default">
+        <button type="button" class="custom-data-button" id="open-upload">Upload custom data</button>
+        <span class="selected-file" id="selected-file">Using the default movie list</span>
         <div class="settings-grid">
             <label for="round_count">Rounds
                 <input id="round_count" name="round_count" type="number" min="1" max="50" value="5" required>
@@ -42,21 +34,38 @@
     </form>
     <div class="rules"><span>+100 CORRECT</span><span>HINTS COST POINTS</span><span>IMAGE HINT IS BLURRED</span></div>
 </main>
+<div class="modal-backdrop" id="upload-modal" hidden>
+    <section class="upload-modal" role="dialog" aria-modal="true" aria-labelledby="upload-title">
+        <button type="button" class="modal-close" id="close-upload" aria-label="Close">&times;</button>
+        <p class="eyebrow">CUSTOM MOVIE LIST</p>
+        <h2 id="upload-title">Upload your Letterboxd data</h2>
+        <p>Download your data from <a href="https://letterboxd.com/data/export/" target="_blank" rel="noopener noreferrer">Letterboxd data export</a>. Unzip the downloaded file, then upload <strong>ratings.csv</strong> here.</p>
+        <label class="file-picker" for="custom_data">Choose CSV file</label>
+        <input id="custom_data" name="custom_data" form="start-form" type="file" accept=".csv,text/csv">
+        <p class="selected-file" id="modal-file">No custom file selected</p>
+    </section>
+</div>
 <script>
     document.getElementById('start-form').addEventListener('submit', () => {
         const button = document.getElementById('start-button');
         button.disabled = true;
         button.classList.add('loading');
     });
-    const sourceInputs = document.querySelectorAll('input[name="data_source"]');
+    const source = document.getElementById('data-source');
     const uploadInput = document.getElementById('custom_data');
-    const updateUpload = () => {
-        const custom = document.querySelector('input[name="data_source"]:checked').value === 'custom';
-        uploadInput.disabled = !custom;
-        uploadInput.required = custom;
-    };
-    sourceInputs.forEach((input) => input.addEventListener('change', updateUpload));
-    updateUpload();
+    const modal = document.getElementById('upload-modal');
+    const selectedFile = document.getElementById('selected-file');
+    const modalFile = document.getElementById('modal-file');
+    document.getElementById('open-upload').addEventListener('click', () => { modal.hidden = false; });
+    document.getElementById('close-upload').addEventListener('click', () => { modal.hidden = true; });
+    modal.addEventListener('click', (event) => { if (event.target === modal) modal.hidden = true; });
+    uploadInput.addEventListener('change', () => {
+        const hasFile = uploadInput.files.length > 0;
+        source.value = hasFile ? 'custom' : 'default';
+        selectedFile.textContent = hasFile ? `Custom file: ${uploadInput.files[0].name}` : 'Using the default movie list';
+        modalFile.textContent = hasFile ? uploadInput.files[0].name : 'No custom file selected';
+        if (hasFile) modal.hidden = true;
+    });
 </script>
 </body>
 </html>
