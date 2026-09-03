@@ -122,14 +122,14 @@ HINT_COSTS = {
     "firstLetter": 20,
     "lastLetter": 20,
     "maskedName": 45,
-    "cast": 20,
+    "cast": 15,
     "rating": 5,
     "userRating": 5,
-    "director": 10,
+    "directors": 10,
     "genres": 10,
     "tagline": 10,
     "description": 20,
-    "review": 25,
+    "review": 20,
     "year": 10,
 }
 
