@@ -2,6 +2,7 @@ import json
 import random
 import csv
 import re
+import sqlite3
 from pathlib import Path
 
 from bs4 import BeautifulSoup
@@ -165,9 +166,16 @@ class LetterboxdScraper(Scraper):
         return allMovies
 
 class LetterboxdDownloadedData(Template):
-    def __init__(self, database="db/database.json"):
-        with open(database, "r", encoding="utf-8") as file:
-            self.database = json.load(file)
+    def __init__(self, database="db/database.sqlite"):
+        self.database = database
+
+    def _findMovie(self, title, year):
+        with sqlite3.connect(self.database) as connection:
+            row = connection.execute(
+                "SELECT movie FROM movies WHERE movie_key = ?",
+                (title + year,),
+            ).fetchone()
+        return json.loads(row[0]) if row else None
 
     def _loadExportedMovies(self, exportedJournal):
         if hasattr(exportedJournal, "stream"):
@@ -198,8 +206,9 @@ class LetterboxdDownloadedData(Template):
                 continue
             if year:
                 key = title + year
-                movie = self.database.get(key)
+                movie = self._findMovie(title, year)
                 if movie:
+                    movie = movie.copy()
                     movie["userRating"] = row.get("Rating") or None
                     movies[key] = movie
         return movies
@@ -278,5 +287,20 @@ def buildMovieDatabaseFromLetterboxdDump(fileName="db/db.jsonl",
             indent = None
         json.dump(movies, outfile, ensure_ascii=False, indent=indent)
 
+def buildSqliteDatabaseFromJson(jsonFileName="db/database.json", outputFileName="db/database.sqlite"):
+    import ijson
+
+    with sqlite3.connect(outputFileName) as connection:
+        connection.execute("DROP TABLE IF EXISTS movies")
+        connection.execute("CREATE TABLE movies (movie_key TEXT PRIMARY KEY, movie TEXT NOT NULL)")
+        with open(jsonFileName, "rb") as file:
+            for key, movie in ijson.kvitems(file, ""):
+                connection.execute(
+                    "INSERT OR REPLACE INTO movies (movie_key, movie) VALUES (?, ?)",
+                    (key, json.dumps(movie, ensure_ascii=False, separators=(",", ":"))),
+                )
+        connection.commit()
+
 if __name__ == "__main__":
-    buildMovieDatabaseFromLetterboxdDump(condense=True)
+    # buildMovieDatabaseFromLetterboxdDump(condense=True)
+    buildSqliteDatabaseFromJson()

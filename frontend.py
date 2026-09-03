@@ -63,7 +63,12 @@ def addSecurityHeaders(response):
     return response
 
 
-scraper = LetterboxdDownloadedData()
+scraper = LetterboxdDownloadedData(
+    os.environ.get(
+        "MOVIE_DATABASE_PATH",
+        os.path.join(os.path.dirname(__file__), "db", "database.sqlite"),
+    )
+)
 DEFAULT_DATA_FILE = os.path.join(os.path.dirname(__file__), "db", "defaultData.csv")
 ROUND_COUNT = 5
 HINT_COSTS = {
