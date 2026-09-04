@@ -331,7 +331,9 @@ def guess():
     selected = request.form.get("answer", "")
     movie = game_round["movie"]
     correct = titlesMatch(selected, movie["title"])
-    game_round.update({"answered": True, "correct": correct})
+    game_round.update(
+        {"answered": True, "correct": correct, "submittedAnswer": selected}
+    )
     session["round"] = game_round
     if correct:
         session["score"] = session.get("score", 0) + 100
