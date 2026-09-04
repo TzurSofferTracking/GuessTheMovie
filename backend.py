@@ -3,6 +3,7 @@ import random
 import csv
 import sqlite3
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
 from curl_cffi import requests
 
@@ -342,28 +343,59 @@ def sortDatabaseJsonByRatingCount(databaseFileName="db/database.json", condense=
     with open(databaseFileName, "w", encoding="utf-8") as file:
         json.dump(sortedMovies, file, ensure_ascii=False, indent=indent)
 
-def rebuildImageUrlsInDatabaseJson(databaseFileName="db/database.json"):
+def updateMovieImage(movie, scraper):
+    imageUrl = movie.get("image")
+    
+    # Check if image URL is invalid or missing
+    if not imageUrl or requests.get(imageUrl, timeout=5).status_code != 200:
+        try:
+            updatedMovie = scraper._loadMovieDetails(movie.get("url"))
+            movie["image"] = updatedMovie.get("image")
+            movie["tagline"] = updatedMovie.get("tagline")
+            print(f"Updated image URL for {movie.get('title')} ({movie.get('year', 0)}): {movie['image']}")
+            return True
+        except Exception as e:
+            print(f"Failed to update image URL for {movie.get('title')} ({movie.get('year', 0)}): {e}")
+            return False
+    return False
+
+def rebuildImageUrlsInDatabaseJson(databaseFileName="db/database.json", offset=0, maxWorkers=10, condense=True):
     scraper = LetterboxdScraper()
+    
     with open(databaseFileName, "r", encoding="utf-8") as file:
         movies = json.load(file)
-    for i, movie in enumerate(movies.values()):
-        imageUrl = movie.get("image")
-        if imageUrl and requests.get(imageUrl).status_code != 200: #< try to load image
-            try:
-                updatedMovie = scraper._loadMovieDetails(movie.get("url"))
-                movie["image"] = updatedMovie.get("image")
-                movie["tagline"] = updatedMovie.get("tagline")
-                print(f"Updated image URL for {movie['title']} ({movie.get('year', 0)}): {movie['image']}")
-            except Exception as e:
-                print(f"Failed to update image URL for {movie['title']} ({movie.get('year', 0)}): {e}")
-        # else:
-        #     print(f"Image URL for {movie['title']} ({movie.get('year', 0)}) is valid: {imageUrl}")
-        if (i + 1) % 100 == 0:
-            print(f"Processed {i + 1} movies... / {len(movies)}... Saving progress to {databaseFileName}...")
-            with open(databaseFileName, "w", encoding="utf-8") as file:
-                json.dump(movies, file, ensure_ascii=False, indent=4)
-    with open(databaseFileName, "w", encoding="utf-8") as file:
-        json.dump(movies, file, ensure_ascii=False, indent=4)
+
+    movieItems = list(movies.values())[offset:]
+    totalMovies = len(movieItems)
+    
+    indent = None if condense else 4
+    batchSize = 1000
+    
+    print(f"Starting execution with {maxWorkers} threads across {totalMovies} movies...")
+
+    # Process movies in safe batches
+    for batchStart in range(0, totalMovies, batchSize):
+        batch = movieItems[batchStart : batchStart + batchSize]
+        
+        # 1. Run threads ONLY for the current batch
+        with ThreadPoolExecutor(max_workers=maxWorkers) as executor:
+            futures = [
+                executor.submit(updateMovieImage, movie, scraper) 
+                for movie in batch
+            ]
+            
+            # Wait for every thread in this batch to complete
+            for future in as_completed(futures):
+                pass
+
+        # 2. All threads are closed here. Safely write progress to disk.
+        processedCount = min(batchStart + batchSize, totalMovies)
+        print(f"Processed {processedCount}/{totalMovies} movies... Saving progress to {databaseFileName}...")
+        
+        with open(databaseFileName, "w", encoding="utf-8") as file:
+            json.dump(movies, file, ensure_ascii=False, indent=indent)
+
+    print("Finished updating database.")
 
 def buildSqliteDatabaseFromJson(jsonFileName="db/database.json", outputFileName="db/database.sqlite"):
     import ijson
@@ -383,5 +415,5 @@ if __name__ == "__main__":
     # buildMovieDatabaseFromLetterboxdDump(condense=True)
     # addToDatabaseFromLetterboxdList("https://letterboxd.com/owencharlish/list/2026/", databaseFileName="db/database.json", condense=True)
     # sortDatabaseJsonByRatingCount()
-    # rebuildImageUrlsInDatabaseJson()
+    rebuildImageUrlsInDatabaseJson(offset=79000)
     buildSqliteDatabaseFromJson()
