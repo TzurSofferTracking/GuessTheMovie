@@ -225,7 +225,7 @@ def home():
     if request.method == "POST":
         data_source = request.form.get("data_source", "default")
         data_file = request.files.get("custom_data")
-        mode = request.form.get("mode", "easy")
+        mode = request.form.get("mode", "hard")
         try:
             round_count = int(request.form.get("round_count", ROUND_COUNT))
         except ValueError:

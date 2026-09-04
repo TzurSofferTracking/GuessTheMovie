@@ -6,6 +6,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from curl_cffi import requests
 from backend import LetterboxdScraper
 
+def saveMoviesToJson(movies, outputFileName="db/database.json", condense=True):
+    indent = 4
+    if condense:
+        indent = None
+    with open(outputFileName, "w", encoding="utf-8") as outfile:
+        json.dump(movies, outfile, ensure_ascii=False, indent=indent)
+
 def buildMovieDatabaseFromLetterboxdDump(fileName="db/db.jsonl",
                                          outputFileName="db/database.json",
                                          condense=True,                        #< save space by condensing the data, removing unnecessary fields and formatting
@@ -34,7 +41,8 @@ def buildMovieDatabaseFromLetterboxdDump(fileName="db/db.jsonl",
                     cast = cast[:3]
                 
                 reviews = movie.get("reviews")
-                reviews = [review for review in reviews if review.get("review_text") != "This review may contain spoilers.I can handle the truth."] if reviews else []
+                if reviews:
+                    reviews = [review for review in reviews if review.get("review_text") != "This review may contain spoilers.I can handle the truth."]
                 if condense and reviews:
                     reviews = reviews[:1]
                     reviews[0]["review_text"] = reviews[0]["review_text"][:100]    #< Limit to first 200 characters of the first review
@@ -53,7 +61,7 @@ def buildMovieDatabaseFromLetterboxdDump(fileName="db/db.jsonl",
                 #         print(f"Image not found for {title} ({movie.get('year')}), reloaded from Letterboxd: {imageUrl}")
                 #     except Exception as e:
                 #         print(f"Image not found for {title} ({movie.get('year')}), and failed to reload from Letterboxd: {e}")
-                
+
                 movie = {
                     "url": movie.get("url"),
                     "title": title,
@@ -71,11 +79,7 @@ def buildMovieDatabaseFromLetterboxdDump(fileName="db/db.jsonl",
                 movies[title+str(movie.get("year", 0))] = movie
     
     if save:
-        with open(outputFileName, "w", encoding="utf-8") as outfile:
-            indent = 4
-            if condense:
-                indent = None
-            json.dump(movies, outfile, ensure_ascii=False, indent=indent)
+        saveMoviesToJson(movies, outputFileName=outputFileName, condense=condense)
     return movies
 
 def _fixReviews(fileName="db/db.jsonl",
@@ -86,14 +90,18 @@ def _fixReviews(fileName="db/db.jsonl",
     reviews = buildMovieDatabaseFromLetterboxdDump(fileName=fileName, outputFileName=outputFileName, condense=condense, save=False)
     with open(outputFileName, "r", encoding="utf-8") as database:
         movies = json.load(database)
+    
+    emptyReviewsCount = 0
+    nonEmptyReviewsCount = 0
     for key in movies.keys():
         if key in reviews:
+            nonEmptyReviewsCount += 1
+            if not reviews[key]["reviews"]:
+                emptyReviewsCount += 1
+                nonEmptyReviewsCount -= 1
             movies[key]["reviews"] = reviews[key]["reviews"]
-    indent = 4
-    if condense:
-        indent = None
-    with open(outputFileName, "w", encoding="utf-8") as outfile:
-        json.dump(movies, outfile, ensure_ascii=False, indent=indent)
+    print(f"Deleted {emptyReviewsCount} empty reviews and modified {nonEmptyReviewsCount} reviews.")
+    saveMoviesToJson(movies, outputFileName=outputFileName, condense=condense)
 
 def addToDatabaseFromLetterboxdList(url, databaseFileName="db/database.json", condense=True):
     # https://letterboxd.com/owencharlish/list/2026/
@@ -108,15 +116,14 @@ def addToDatabaseFromLetterboxdList(url, databaseFileName="db/database.json", co
     with open(databaseFileName, "w", encoding="utf-8") as file:
         json.dump(existingMovies, file, ensure_ascii=False, indent=indent)
 
-def sortDatabaseJsonByRatingCount(databaseFileName="db/database.json", condense=True):
+def sortDatabaseJsonByRating(databaseFileName="db/database.json", condense=True):
     with open(databaseFileName, "r", encoding="utf-8") as file:
         movies = json.load(file)
-    sortedMovies = dict(sorted(movies.items(), key=lambda item: item[1].get("ratingCount", 0), reverse=True))
-    indent = 4
-    if condense:
-        indent = None
-    with open(databaseFileName, "w", encoding="utf-8") as file:
-        json.dump(sortedMovies, file, ensure_ascii=False, indent=indent)
+
+    moviesZip = movies.items()
+    moviesZip = sorted(moviesZip, key=lambda movieZip: (float(movieZip[1].get("rating") or 0), movieZip[1].get("title")), reverse=True)
+    movies = dict(moviesZip)
+    saveMoviesToJson(movies, outputFileName=databaseFileName, condense=condense)
 
 def updateMovieImage(movie, scraper):
     imageUrl = movie.get("image")
@@ -158,12 +165,10 @@ def rebuildImageUrlsInDatabaseJson(databaseFileName="db/database.json", offset=0
                 executor.submit(updateMovieImage, movie, scraper) 
                 for movie in batch
             ]
-            
-            # Wait for every thread in this batch to complete
+
             for future in as_completed(futures):
                 pass
 
-        # 2. All threads are closed here. Safely write progress to disk.
         processedCount = min(batchStart + batchSize, totalMovies)
         print(f"Processed {processedCount}/{totalMovies} movies... Saving progress to {databaseFileName}...")
         
@@ -185,9 +190,9 @@ def buildSqliteDatabaseFromJson(jsonFileName="db/database.json", outputFileName=
         connection.commit()
 
 if __name__ == "__main__":
+    # _fixReviews()
     # buildMovieDatabaseFromLetterboxdDump(condense=True)
     # addToDatabaseFromLetterboxdList("https://letterboxd.com/owencharlish/list/2026/", databaseFileName="db/database.json", condense=True)
-    # sortDatabaseJsonByRatingCount()
-    # rebuildImageUrlsInDatabaseJson(offset=79000)
-    _fixReviews()
+    # sortDatabaseJsonByRating()
+    # rebuildImageUrlsInDatabaseJson(offset=185000)
     buildSqliteDatabaseFromJson()
